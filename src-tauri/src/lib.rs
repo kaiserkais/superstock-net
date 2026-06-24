@@ -3,9 +3,9 @@ mod auth;
 mod staff;
 mod routes;
 mod handlers; // <-- Declares the new modular handler file
+mod suppliers;
 
 use std::net::SocketAddr;
-use axum::Router;
 use mdns_sd::{ServiceDaemon, ServiceInfo, ServiceEvent};
 use sqlx::SqlitePool;
 use std::sync::Arc;

@@ -5,6 +5,7 @@ import Dashboard from '../Dashboard/Dashboard';
 import Login from '../pages/Login'; // 👈 Make sure to import your Login component
 import useAuthStore from '../store/useAuthStore'; // 👈 Import your Zustand auth store
 import Staff from '../pages/Staff/Staff';
+import SuppliersPage from '../pages/suppliers/SuppliersPage';
 
 // --- ROUTE SAFEGUARDS ---
 
@@ -52,6 +53,10 @@ const router = createHashRouter([
       {
         path: "staff",
         element: <Staff />,
+      },
+      {
+        path: "suppliers",
+        element: <SuppliersPage />,
       }
     ],
   },

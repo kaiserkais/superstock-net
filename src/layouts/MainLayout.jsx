@@ -37,7 +37,7 @@ const NAV_MGMT = [
     { Icon: IconChartBar, label: "Reports", badge: null },
     // Added the link destination just for Staff
     { Icon: IconIdBadge, label: "Staff", badge: null, to: "/staff" },
-    { Icon: IconTruck, label: "Suppliers", badge: null },
+    { Icon: IconTruck, label: "Suppliers", badge: null, to: "/suppliers" },
 ];
 
 

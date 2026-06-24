@@ -1,4 +1,4 @@
-use sqlx::{SqlitePool, Row};
+use sqlx::SqlitePool;
 use bcrypt::{hash, DEFAULT_COST};
 use std::fs;
 use std::path::PathBuf;
@@ -7,8 +7,6 @@ use std::path::PathBuf;
 /// runs structural schemas, and seeds fallback records.
 pub async fn init_database() -> Option<SqlitePool> {
     // ─── DYNAMIC PLATFORM PATH RESOLUTION ────────────────────────────────
-    // Resolves to C:\Users\Name\AppData\Roaming\SuperStock on Windows
-    // Falls back to ~/.local/share/SuperStock on Linux/macOS
     let mut storage_dir = match std::env::var("APPDATA") {
         Ok(path) => PathBuf::from(path).join("SuperStock"),
         Err(_) => {
@@ -17,14 +15,12 @@ pub async fn init_database() -> Option<SqlitePool> {
         }
     };
 
-    // 💡 SQLite cannot create missing directories automatically. 
-    // We must ensure the folder exists before attempting a connection.
+    // Ensure the application data directory exists
     if let Err(e) = fs::create_dir_all(&storage_dir) {
         println!("❌ CRITICAL INITIALIZATION ERROR: Failed to create AppData directory! Reason: {}", e);
         return None;
     }
 
-    // Append the filename to complete the target path
     storage_dir.push("superstock.db");
     let db_url = format!("sqlite://{}?mode=rwc", storage_dir.to_string_lossy());
     
@@ -55,6 +51,7 @@ pub async fn init_database() -> Option<SqlitePool> {
 }
 
 async fn create_schemas(pool: &SqlitePool) -> Result<(), sqlx::Error> {
+    // 1. Products Table
     let product_table = "CREATE TABLE IF NOT EXISTS products (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
@@ -63,6 +60,7 @@ async fn create_schemas(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     );";
     sqlx::query(product_table).execute(pool).await?;
 
+    // 2. Users Table
     let user_table = "CREATE TABLE IF NOT EXISTS users (
         id TEXT PRIMARY KEY,
         username TEXT NOT NULL UNIQUE,
@@ -72,10 +70,21 @@ async fn create_schemas(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     );";
     sqlx::query(user_table).execute(pool).await?;
 
+    // 3. Suppliers Table 👈 NEW STRUCTURE
+    let supplier_table = "CREATE TABLE IF NOT EXISTS suppliers (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        phone_number TEXT,
+        address TEXT,
+        total_debt REAL NOT NULL DEFAULT 0.0
+    );";
+    sqlx::query(supplier_table).execute(pool).await?;
+
     Ok(())
 }
 
 async fn seed_default_data(pool: &SqlitePool) -> Result<(), sqlx::Error> {
+    // Seed Products
     let prod_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM products").fetch_one(pool).await.unwrap_or(0);
     if prod_count == 0 {
         sqlx::query("INSERT INTO products (id, name, price, stock) VALUES (?, ?, ?, ?)")
@@ -84,6 +93,7 @@ async fn seed_default_data(pool: &SqlitePool) -> Result<(), sqlx::Error> {
         println!("📝 Seed product inserted successfully.");
     }
 
+    // Seed Users
     let user_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users").fetch_one(pool).await.unwrap_or(0);
     if user_count == 0 {
         let admin_password_hash = hash("admin", DEFAULT_COST)
@@ -100,6 +110,22 @@ async fn seed_default_data(pool: &SqlitePool) -> Result<(), sqlx::Error> {
             .await?;
         
         println!("👤 Default account generated successfully -> Username: admin | Password: admin");
+    }
+
+    // Seed Suppliers 👈 NEW SEED DATA
+    let supplier_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM suppliers").fetch_one(pool).await.unwrap_or(0);
+    if supplier_count == 0 {
+        let seed_supplier = "INSERT INTO suppliers (id, name, phone_number, address, total_debt) VALUES (?, ?, ?, ?, ?)";
+        sqlx::query(seed_supplier)
+            .bind("s1")
+            .bind("Wholesale Footwear Co.")
+            .bind("0555112233")
+            .bind("Alger, Centre")
+            .bind(45000.0) // Sample initial debt balance
+            .execute(pool)
+            .await?;
+        
+        println!("📦 Seed supplier inserted successfully -> Name: Wholesale Footwear Co. | Initial Debt: 45000.0");
     }
 
     Ok(())
