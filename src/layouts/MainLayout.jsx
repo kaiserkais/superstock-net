@@ -21,7 +21,8 @@ import {
     IconPackage,
 } from "@tabler/icons-react";
 import Dashboard from "../Dashboard/Dashboard";
-import { Outlet } from "react-router-dom";
+// Added Link here to handle routing
+import { Outlet, Link } from "react-router-dom";
 
 // ─── Nav config ───────────────────────────────────────────────────────────────
 const NAV_MAIN = [
@@ -34,31 +35,35 @@ const NAV_MAIN = [
 
 const NAV_MGMT = [
     { Icon: IconChartBar, label: "Reports", badge: null },
-    { Icon: IconIdBadge, label: "Staff", badge: null },
+    // Added the link destination just for Staff
+    { Icon: IconIdBadge, label: "Staff", badge: null, to: "/staff" },
     { Icon: IconTruck, label: "Suppliers", badge: null },
 ];
 
 
 
 // ─── Sidebar ──────────────────────────────────────────────────────────────────
-function NavItem({ Icon, label, badge, open, active, onSelect }) {
+function NavItem({ Icon, label, badge, open, active, onSelect, to }) {
     const [hovered, setHovered] = useState(false);
 
-    return (
-        <button
-            onClick={() => onSelect(label)}
-            title={!open ? label : undefined}
-            onMouseEnter={() => setHovered(true)}
-            onMouseLeave={() => setHovered(false)}
-            className="w-full flex items-center h-11 rounded-[10px] border-0 cursor-pointer transition-colors duration-150"
-            style={{
-                justifyContent: open ? "flex-start" : "center",
-                padding: open ? "0 14px" : "0",
-                gap: open ? "12px" : undefined,
-                color: active ? "#E8A04B" : "#888",
-                background: active ? "#2D2230" : hovered ? "#2A2A36" : "transparent",
-            }}
-        >
+    // Shared styles and classes to guarantee the look stays exactly the same
+    const elementProps = {
+        title: !open ? label : undefined,
+        onMouseEnter: () => setHovered(true),
+        onMouseLeave: () => setHovered(false),
+        className: "w-full flex items-center h-11 rounded-[10px] border-0 cursor-pointer transition-colors duration-150 no-underline select-none",
+        style: {
+            justifyContent: open ? "flex-start" : "center",
+            padding: open ? "0 14px" : "0",
+            gap: open ? "12px" : undefined,
+            color: active ? "#E8A04B" : "#888",
+            background: active ? "#2D2230" : hovered ? "#2A2A36" : "transparent",
+            textAlign: "left",
+        }
+    };
+
+    const innerContent = (
+        <>
             <Icon size={20} stroke={1.75} aria-hidden="true" style={{ flexShrink: 0 }} />
             {open && <span style={{ fontSize: 13, whiteSpace: "nowrap" }}>{label}</span>}
             {badge && (
@@ -66,6 +71,22 @@ function NavItem({ Icon, label, badge, open, active, onSelect }) {
                     ? <span className="ml-auto text-[10px] rounded-lg px-1.5 font-medium text-white leading-4" style={{ background: "#E24B4A" }}>{badge}</span>
                     : <span className="absolute top-2 right-2 text-[10px] rounded-lg px-1 font-medium text-white leading-4" style={{ background: "#E24B4A" }}>{badge}</span>
             )}
+        </>
+    );
+
+    // If 'to' is defined (like for Staff), render as a React Router Link
+    if (to) {
+        return (
+            <Link to={to} onClick={() => onSelect(label)} {...elementProps}>
+                {innerContent}
+            </Link>
+        );
+    }
+
+    // Otherwise, keep it as a button for the others to be wired up later
+    return (
+        <button onClick={() => onSelect(label)} {...elementProps}>
+            {innerContent}
         </button>
     );
 }

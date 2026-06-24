@@ -1,90 +1,29 @@
+mod db;
+mod auth;
+mod staff;
+mod routes;
+mod handlers; // <-- Declares the new modular handler file
+
 use std::net::SocketAddr;
-use axum::{
-    routing::get, 
-    Router, 
-    extract::{State, WebSocketUpgrade, ws::{WebSocket, Message}}, 
-    Json, 
-    http::Uri,
-    response::IntoResponse
-};
-use tower_http::cors::CorsLayer;
+use axum::Router;
 use mdns_sd::{ServiceDaemon, ServiceInfo, ServiceEvent};
-use sqlx::{SqlitePool, Row};
+use sqlx::SqlitePool;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::broadcast;
-use tauri::Manager; // Required for safe OS app-data directory path resolution
+use tauri::Manager;
 
 const SERVICE_TYPE: &str = "_superstock-pos._tcp.local.";
 const INSTANCE_NAME: &str = "superstock_master_server";
 
-// Configuration Struct to save to disk
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 struct AppConfig {
-    app_mode: String, // "host" or "client"
+    app_mode: String,
 }
 
-struct AppState {
-    db: SqlitePool,
-    tx: broadcast::Sender<String>,
-}
-
-async fn ping_host() -> &'static str {
-    "SuperStock Host Active"
-}
-
-async fn fallback_404(_uri: Uri) -> (axum::http::StatusCode, String) {
-    (axum::http::StatusCode::NOT_FOUND, "Route not found".to_string())
-}
-
-async fn init_database() -> Option<SqlitePool> {
-    let db_url = "sqlite://../superstock.db?mode=rwc";
-    
-    println!("⚙️ [Step 1/3] Connecting to SQLite database...");
-    let pool = match SqlitePool::connect(db_url).await {
-        Ok(p) => p,
-        Err(e) => {
-            println!("❌ CRITICAL DATABASE ERROR: Failed to connect to SQLite! Reason: {}", e);
-            return None;
-        }
-    };
-
-    if let Err(e) = sqlx::query("PRAGMA journal_mode=WAL;").execute(&pool).await {
-        println!("❌ DATABASE ERROR: Failed to set WAL mode! Reason: {}", e);
-        return None;
-    }
-    
-    if let Err(e) = sqlx::query("PRAGMA synchronous=NORMAL;").execute(&pool).await {
-        println!("❌ DATABASE ERROR: Failed to set synchronous mode! Reason: {}", e);
-        return None;
-    }
-
-    let table_query = "CREATE TABLE IF NOT EXISTS products (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        price REAL NOT NULL,
-        stock INTEGER NOT NULL
-    );";
-    
-    if let Err(e) = sqlx::query(table_query).execute(&pool).await {
-        println!("❌ DATABASE ERROR: Failed to create products table! Reason: {}", e);
-        return None;
-    }
-
-    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM products")
-        .fetch_one(&pool)
-        .await
-        .unwrap_or(0);
-
-    if count == 0 {
-        let _ = sqlx::query("INSERT INTO products (id, name, price, stock) VALUES (?, ?, ?, ?)")
-            .bind("p1").bind("Air Jordan 1 Low").bind(15000.0).bind(12)
-            .execute(&pool).await;
-        println!("📝 Seed product inserted successfully.");
-    }
-
-    println!("💾 SQLite Database initialized flawlessly.");
-    Some(pool)
+pub struct AppState {
+    pub db: SqlitePool,
+    pub tx: broadcast::Sender<String>,
 }
 
 fn start_mdns_broadcast() -> bool {
@@ -114,45 +53,6 @@ fn start_mdns_broadcast() -> bool {
     true
 }
 
-async fn ws_handler(ws: WebSocketUpgrade, State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    ws.on_upgrade(|socket| handle_socket(socket, state))
-}
-
-async fn handle_socket(mut socket: WebSocket, state: Arc<AppState>) {
-    println!("🔌 A terminal device connected via WebSocket.");
-    let mut rx = state.tx.subscribe();
-    tokio::spawn(async move {
-        while let Ok(msg) = rx.recv().await {
-            if socket.send(Message::Text(msg.into())).await.is_err() {
-                break;
-            }
-        }
-        println!("🔌 A terminal device disconnected.");
-    });
-}
-
-async fn get_products(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
-    let rows = sqlx::query("SELECT id, name, price, stock FROM products").fetch_all(&state.db).await.unwrap();
-    let mut products = vec![];
-    for row in rows {
-        products.push(serde_json::json!({
-            "id": row.get::<String, _>("id"),
-            "name": row.get::<String, _>("name"),
-            "price": row.get::<f64, _>("price"),
-            "stock": row.get::<i32, _>("stock"),
-        }));
-    }
-    Json(serde_json::json!(products))
-}
-
-async fn simulate_sale(State(state): State<Arc<AppState>>) -> &'static str {
-    let _ = sqlx::query("UPDATE products SET stock = MAX(0, stock - 1) WHERE id = 'p1'").execute(&state.db).await;
-    let current_stock: i32 = sqlx::query_scalar("SELECT stock FROM products WHERE id = 'p1'").fetch_one(&state.db).await.unwrap_or(0);
-    let payload = serde_json::json!({"event": "stock_update", "product_id": "p1", "new_stock": current_stock}).to_string();
-    let _ = state.tx.send(payload);
-    "Sale processed! Broadcast sent."
-}
-
 async fn start_backend_server(db_pool: SqlitePool) {
     start_mdns_broadcast();
     
@@ -160,14 +60,8 @@ async fn start_backend_server(db_pool: SqlitePool) {
     let (tx, _rx) = broadcast::channel(16);
     let shared_state = Arc::new(AppState { db: db_pool, tx });
 
-    let app = Router::new()
-        .route("/api/ping", get(ping_host))
-        .route("/api/products", get(get_products))
-        .route("/api/simulate-sale", get(simulate_sale))
-        .route("/ws", get(ws_handler))
-        .fallback(fallback_404)
-        .layer(CorsLayer::permissive())
-        .with_state(shared_state);
+    // Build routes using our clean modular router
+    let app = routes::create_router(shared_state);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 8080));
     
@@ -183,7 +77,6 @@ async fn start_backend_server(db_pool: SqlitePool) {
     }
 }
 
-// TAURI COMMAND: Tells Frontend what mode this app is in
 #[tauri::command]
 async fn get_app_mode(app: tauri::AppHandle) -> String {
     let app_dir = app.path().app_data_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
@@ -198,11 +91,10 @@ async fn get_app_mode(app: tauri::AppHandle) -> String {
     "unknown".to_string()
 }
 
-// TAURI COMMAND: Writes choice from frontend wizard screen to storage
 #[tauri::command]
 async fn set_app_mode(app: tauri::AppHandle, mode: String) -> Result<(), String> {
     if mode != "host" && mode != "client" {
-        return Err("Invalid application mode config parameter context.".to_string());
+        return Err("Invalid application mode context.".to_string());
     }
 
     let app_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
@@ -237,15 +129,12 @@ async fn discover_host() -> Result<String, String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        // Register the new app mode setup commands here
         .invoke_handler(tauri::generate_handler![discover_host, get_app_mode, set_app_mode])
         .setup(|app| {
-            // Find or create safe system environment user files location
             let app_dir = app.path().app_data_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
             let _ = std::fs::create_dir_all(&app_dir);
             let config_path = app_dir.join("superstock_config.json");
 
-            // Check if configuration exists
             let config: Option<AppConfig> = if config_path.exists() {
                 let file_content = std::fs::read_to_string(config_path).unwrap_or_default();
                 serde_json::from_str(&file_content).ok()
@@ -253,12 +142,12 @@ pub fn run() {
                 None
             };
 
-            // Fork background thread tasks execution paths dynamically
             tauri::async_runtime::spawn(async move {
                 if let Some(cfg) = config {
                     if cfg.app_mode == "host" {
                         println!("👑 Identity Confirmed: Running as HOST MASTER SERVER.");
-                        if let Some(db_pool) = init_database().await {
+                        
+                        if let Some(db_pool) = db::init_database().await {
                             start_backend_server(db_pool).await;
                         } else {
                             println!("🛑 App startup aborted due to initialization failure.");
@@ -266,7 +155,6 @@ pub fn run() {
                         }
                     } else {
                         println!("💻 Identity Confirmed: Running as CLIENT TERMINAL. Local database skipped.");
-                        // Client skips running Axum or SQLite completely; relies strictly on network hooks
                     }
                 } else {
                     println!("❓ Identity Unknown: First boot detected. Setup configuration wizard required.");
