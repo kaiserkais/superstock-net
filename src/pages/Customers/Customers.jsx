@@ -1,19 +1,21 @@
 import React, { useState, useEffect } from "react";
 import axios from "axios";
 import {
-    IconPlus,
+    IconUserPlus,
     IconPencil,
     IconTrash,
     IconX,
     IconDeviceMobile,
     IconAlertTriangle,
     IconMapPin,
-    IconReceipt
+    IconCoins,
+    IconSearch
 } from "@tabler/icons-react";
 
-export default function SuppliersPage() {
+export default function Customers() {
     // ─── STATE MANAGEMENT ────────────────────────────────────────────────────────
-    const [suppliers, setSuppliers] = useState([]);
+    const [customerList, setCustomerList] = useState([]);
+    const [searchQuery, setSearchQuery] = useState("");
     const [loading, setLoading] = useState(true);
 
     // Modal Control States
@@ -21,10 +23,10 @@ export default function SuppliersPage() {
     const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
 
     // Form / Action Targets
-    const [editingSupplier, setEditingSupplier] = useState(null); // null = Add Mode, object = Edit Mode
-    const [deletingSupplier, setDeletingSupplier] = useState(null);
+    const [editingCustomer, setEditingCustomer] = useState(null); // null = Add Mode, object = Edit Mode
+    const [deletingCustomer, setDeletingCustomer] = useState(null);
 
-    // Controlled Form Fields
+    // Controlled Form Fields (Aligned precisely with Axum structs)
     const [formData, setFormData] = useState({ name: "", phone_number: "", address: "", initial_debt: "0" });
 
     // Dynamic Button Hover Flags
@@ -33,22 +35,24 @@ export default function SuppliersPage() {
 
     // ─── DATABASE SYNC (LIFECYCLE) ───────────────────────────────────────────────
     useEffect(() => {
-        fetchSuppliers();
+        fetchCustomers();
     }, []);
 
-    const fetchSuppliers = async () => {
+    const fetchCustomers = async () => {
         try {
             setLoading(true);
-            const response = await axios.get("/api/suppliers");
+            const response = await axios.get("/api/customers");
             
+            console.log("Axum Customers Response Raw Payload:", response.data);
+
             const actualArray = Array.isArray(response.data)
                 ? response.data
-                : (response.data.suppliers || response.data.data || []);
+                : (response.data.customers || response.data.data || []);
 
-            setSuppliers(actualArray);
+            setCustomerList(actualArray);
         } catch (error) {
-            console.error("Database connection failed while fetching suppliers registry:", error);
-            setSuppliers([]);
+            console.error("Database connection failed while fetching customer registry:", error);
+            setCustomerList([]);
         } finally {
             setLoading(false);
         }
@@ -56,24 +60,24 @@ export default function SuppliersPage() {
 
     // ─── HANDLERS ────────────────────────────────────────────────────────────────
     const openAddModal = () => {
-        setEditingSupplier(null);
+        setEditingCustomer(null);
         setFormData({ name: "", phone_number: "", address: "", initial_debt: "0" });
         setIsFormModalOpen(true);
     };
 
-    const openEditModal = (supplier) => {
-        setEditingSupplier(supplier);
+    const openEditModal = (customer) => {
+        setEditingCustomer(customer);
         setFormData({
-            name: supplier.name,
-            phone_number: supplier.phone_number || "",
-            address: supplier.address || "",
-            initial_debt: "0" // Kept as structural safe placeholder for edits
+            name: customer.name,
+            phone_number: customer.phone_number || "",
+            address: customer.address || "",
+            initial_debt: "0" // Ignored during PUT operations on the backend
         });
         setIsFormModalOpen(true);
     };
 
-    const openDeleteModal = (supplier) => {
-        setDeletingSupplier(supplier);
+    const openDeleteModal = (customer) => {
+        setDeletingCustomer(customer);
         setIsDeleteModalOpen(true);
     };
 
@@ -86,23 +90,23 @@ export default function SuppliersPage() {
                 address: formData.address.trim() !== "" ? formData.address : null,
             };
 
-            if (editingSupplier) {
-                // UPDATE Route: PUT /api/suppliers/{id}
-                await axios.put(`/api/suppliers/${editingSupplier.id}`, cleanPayload);
+            if (editingCustomer) {
+                // UPDATE Route: PUT /api/customers/{id}
+                await axios.put(`/api/customers/${editingCustomer.id}`, cleanPayload);
                 
-                setSuppliers(prev => prev.map(item =>
-                    item.id === editingSupplier.id ? { ...item, ...cleanPayload } : item
+                setCustomerList(prev => prev.map(item =>
+                    item.id === editingCustomer.id ? { ...item, ...cleanPayload } : item
                 ));
             } else {
-                // CREATE Route: POST /api/suppliers
+                // CREATE Route: POST /api/customers
                 const finalCreatePayload = {
                     ...cleanPayload,
                     initial_debt: parseFloat(formData.initial_debt) || 0.0
                 };
 
-                const response = await axios.post("/api/suppliers", finalCreatePayload);
+                const response = await axios.post("/api/customers", finalCreatePayload);
 
-                const newSupplierNode = {
+                const newCustomerNode = {
                     id: response.data.id,
                     name: cleanPayload.name,
                     phone_number: cleanPayload.phone_number,
@@ -110,27 +114,38 @@ export default function SuppliersPage() {
                     total_debt: finalCreatePayload.initial_debt
                 };
 
-                setSuppliers(prev => [...prev, newSupplierNode]);
+                setCustomerList(prev => [...prev, newCustomerNode]);
             }
             setIsFormModalOpen(false);
         } catch (error) {
             console.error("Database write synchronization dropped:", error);
-            alert(error.response?.data || "Operation failed. Check terminal credentials.");
+            alert(error.response?.data || "Operation failed. Verify internal ledger data.");
         }
     };
 
     const handleDeleteConfirm = async () => {
         try {
-            // DESTROY Route: DELETE /api/suppliers/{id}
-            await axios.delete(`/api/suppliers/${deletingSupplier.id}`);
-            setSuppliers(prev => prev.filter(item => item.id !== deletingSupplier.id));
+            // DESTROY Route: DELETE /api/customers/{id}
+            await axios.delete(`/api/customers/${deletingCustomer.id}`);
+            setCustomerList(prev => prev.filter(item => item.id !== deletingCustomer.id));
             setIsDeleteModalOpen(false);
-            setDeletingSupplier(null);
+            setDeletingCustomer(null);
         } catch (error) {
             console.error("Failed to execute database cascade deletion:", error);
-            alert(error.response?.data || "Supplier account protection rule violated.");
+            alert(error.response?.data || "Error processing profile deletion.");
         }
     };
+
+    // ─── LOCAL FILTERING PIPELINE ────────────────────────────────────────────────
+    const filteredCustomers = customerList.filter(customer => {
+        const query = searchQuery.toLowerCase();
+        return (
+            customer.name.toLowerCase().includes(query) ||
+            (customer.phone_number && customer.phone_number.includes(query)) ||
+            (customer.address && customer.address.toLowerCase().includes(query)) ||
+            customer.id.toLowerCase().includes(query)
+        );
+    });
 
     return (
         <>
@@ -138,10 +153,10 @@ export default function SuppliersPage() {
             <div className="flex items-start justify-between mb-5">
                 <div>
                     <h1 style={{ fontSize: 20, fontWeight: 500, color: "#1C1C24", lineHeight: 1.2 }}>
-                        Suppliers Registry
+                        Customer Registry
                     </h1>
                     <p style={{ fontSize: 13, color: "#6B6B7A", marginTop: 3 }}>
-                        Manage local wholesale supply channels, procurement points, and outstanding ledger account dynamics.
+                        Manage local client records, tracking profiles, addresses, and open credit ledger balances.
                     </p>
                 </div>
                 <button
@@ -151,25 +166,37 @@ export default function SuppliersPage() {
                     className="flex items-center gap-1.5 h-9 px-4 rounded-lg text-white border-0 cursor-pointer font-medium"
                     style={{ fontSize: 13, background: addBtnHover ? "#C8873A" : "#E8A04B", transition: "background 0.15s" }}
                 >
-                    <IconPlus size={16} stroke={2} />
-                    Add Supplier Partner
+                    <IconUserPlus size={16} stroke={2} />
+                    Register New Customer
                 </button>
+            </div>
+
+            {/* ─── SEARCH & FILTER INPUT BAR ──────────────────────────────────────── */}
+            <div className="mb-4 relative flex items-center max-w-sm">
+                <IconSearch size={16} style={{ position: "absolute", left: 12, color: "#9B9BA8" }} />
+                <input
+                    type="text"
+                    placeholder="Search by client name, terminal, or address..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    style={{ width: "100%", height: 36, padding: "0 12px 0 36px", fontSize: 13, borderRadius: 8, border: "1px solid #E4E3E0", background: "#fff", color: "#1C1C24", outline: "none" }}
+                />
             </div>
 
             {/* ─── MAIN REGISTRY CONTAINER ────────────────────────────────────────── */}
             <div className="rounded-xl border overflow-hidden" style={{ background: "#fff", borderColor: "#E4E3E0" }}>
                 <div style={{ padding: "14px 18px", borderBottom: "1px solid #E4E3E0", fontSize: 14, fontWeight: 500, color: "#1C1C24" }}>
-                    Active Trading Partners ({loading ? "..." : suppliers.length})
+                    Active Client Accounts ({loading ? "..." : filteredCustomers.length})
                 </div>
 
                 <div className="overflow-x-auto">
                     <table className="w-full text-left border-collapse" style={{ fontSize: 13 }}>
                         <thead>
                             <tr style={{ background: "#F7F6F3", borderBottom: "1px solid #E4E3E0", color: "#6B6B7A" }}>
-                                <th className="p-3.5 font-medium">Supplier Partner</th>
-                                <th className="p-3.5 font-medium">Phone Network</th>
-                                <th className="p-3.5 font-medium">Address Base</th>
-                                <th className="p-3.5 font-medium">Account Balance Status</th>
+                                <th className="p-3.5 font-medium">Customer Profile</th>
+                                <th className="p-3.5 font-medium">Phone Terminal</th>
+                                <th className="p-3.5 font-medium">Geographic Location</th>
+                                <th className="p-3.5 font-medium text-right">Ledger Balance</th>
                                 <th className="p-3.5 font-medium text-right">Actions</th>
                             </tr>
                         </thead>
@@ -177,40 +204,40 @@ export default function SuppliersPage() {
                             {loading ? (
                                 <tr>
                                     <td colSpan="5" className="p-8 text-center text-[#6B6B7A]">
-                                        Querying local SQLite instance for active suppliers...
+                                        Querying local database instance for client indices...
                                     </td>
                                 </tr>
-                            ) : suppliers.length === 0 ? (
+                            ) : filteredCustomers.length === 0 ? (
                                 <tr>
                                     <td colSpan="5" className="p-8 text-center text-[#6B6B7A]">
-                                        No trading partners configured. Click 'Add Supplier Partner' to populate.
+                                        No active configurations registered matching current criteria.
                                     </td>
                                 </tr>
                             ) : (
-                                suppliers.map((supplier) => (
-                                    <tr key={supplier.id} className="border-b last:border-b-0" style={{ borderColor: "#E4E3E0" }}>
-                                        {/* Avatar and Supplier Name */}
+                                filteredCustomers.map((customer) => (
+                                    <tr key={customer.id} className="border-b last:border-b-0" style={{ borderColor: "#E4E3E0" }}>
+                                        {/* Avatar and Username */}
                                         <td className="p-3.5 flex items-center gap-3">
                                             <div
-                                                className="flex items-center justify-center rounded-full font-medium shrink-0 font-mono"
+                                                className="flex items-center justify-center rounded-full text-white font-medium shrink-0 font-mono"
                                                 style={{
                                                     width: 32,
                                                     height: 32,
-                                                    background: supplier.total_debt > 0 ? "#2D2230" : "#E8A04B",
-                                                    color: supplier.total_debt > 0 ? "#E8A04B" : "#fff",
+                                                    background: "#4A4A5A",
+                                                    color: "#fff",
                                                     fontSize: 12
                                                 }}
                                             >
-                                                {supplier.name ? supplier.name.substring(0, 2).toUpperCase() : "??"}
+                                                {customer.name ? customer.name.substring(0, 2).toUpperCase() : "??"}
                                             </div>
-                                            <span className="font-medium" style={{ color: "#1C1C24" }}>{supplier.name}</span>
+                                            <span className="font-medium" style={{ color: "#1C1C24" }}>{customer.name}</span>
                                         </td>
 
                                         {/* Phone */}
                                         <td className="p-3.5" style={{ color: "#6B6B7A" }}>
                                             <div className="flex items-center gap-1">
                                                 <IconDeviceMobile size={14} style={{ color: "#9B9BA8" }} />
-                                                {supplier.phone_number || "—"}
+                                                {customer.phone_number || "—"}
                                             </div>
                                         </td>
 
@@ -218,60 +245,42 @@ export default function SuppliersPage() {
                                         <td className="p-3.5" style={{ color: "#6B6B7A" }}>
                                             <div className="flex items-center gap-1">
                                                 <IconMapPin size={14} style={{ color: "#9B9BA8" }} />
-                                                {supplier.address || "—"}
+                                                {customer.address || "—"}
                                             </div>
                                         </td>
 
-                                        {/* Financial State Balance Pill */}
-                                        <td className="p-3.5">
-                                            <span
-                                                className="rounded font-medium inline-flex items-center gap-1"
+                                        {/* Debt Allocation Column */}
+                                        <td className="p-3.5 text-right font-mono font-semibold">
+                                            <span 
+                                                className="rounded inline-flex items-center gap-1"
                                                 style={{
-                                                    fontSize: 11,
-                                                    padding: "2px 8px",
-                                                    background: supplier.total_debt > 0 ? "#FAEEDA" : "#EAF3DE",
-                                                    color: supplier.total_debt > 0 ? "#633806" : "#3B6D11",
+                                                    fontSize: 12,
+                                                    padding: "2px 6px",
+                                                    background: customer.total_debt > 0 ? "#FCEBEB" : "#EAF3DE",
+                                                    color: customer.total_debt > 0 ? "#E24B4A" : "#3B6D11",
                                                 }}
                                             >
-                                                {supplier.total_debt > 0 ? (
-                                                    <>
-                                                        Owe {Number(supplier.total_debt).toLocaleString()} DA
-                                                    </>
-                                                ) : (
-                                                    <>Balance Settled</>
-                                                )}
+                                                <IconCoins size={12} />
+                                                {Number(customer.total_debt).toFixed(2)} DA
                                             </span>
                                         </td>
 
-                                        {/* Actions Grid */}
+                                        {/* Action Triggers */}
                                         <td className="p-3.5 text-right">
                                             <div className="flex items-center justify-end gap-1.5">
-                                                {/* Account Ledger Statements Action */}
                                                 <button
-                                                    onClick={() => console.log(`Opening financial log node for supplier ID: ${supplier.id}`)}
+                                                    onClick={() => openEditModal(customer)}
                                                     className="p-1.5 rounded-lg border bg-transparent cursor-pointer transition-colors"
                                                     style={{ borderColor: "#E4E3E0", color: "#6B6B7A" }}
-                                                    title="Account Ledger & Statement"
-                                                >
-                                                    <IconReceipt size={15} stroke={1.75} />
-                                                </button>
-
-                                                {/* Edit Trigger */}
-                                                <button
-                                                    onClick={() => openEditModal(supplier)}
-                                                    className="p-1.5 rounded-lg border bg-transparent cursor-pointer transition-colors"
-                                                    style={{ borderColor: "#E4E3E0", color: "#6B6B7A" }}
-                                                    title="Modify supplier record"
+                                                    title="Modify client file"
                                                 >
                                                     <IconPencil size={15} stroke={1.75} />
                                                 </button>
-
-                                                {/* Delete Trigger */}
                                                 <button
-                                                    onClick={() => openDeleteModal(supplier)}
+                                                    onClick={() => openDeleteModal(customer)}
                                                     className="p-1.5 rounded-lg border bg-transparent cursor-pointer transition-colors"
                                                     style={{ borderColor: "#E4E3E0", color: "#E24B4A" }}
-                                                    title="Purge partner connection"
+                                                    title="Purge profile registry"
                                                 >
                                                     <IconTrash size={15} stroke={1.75} />
                                                 </button>
@@ -285,14 +294,14 @@ export default function SuppliersPage() {
                 </div>
             </div>
 
-            {/* ─── MODAL: ADD / EDIT SUPPLIER ────────────────────────────────────── */}
+            {/* ─── MODAL: ADD / EDIT CUSTOMER ────────────────────────────────────── */}
             {isFormModalOpen && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(26, 26, 34, 0.45)", backdropFilter: "blur(2px)" }}>
                     <div className="w-full max-w-md rounded-xl border" style={{ background: "#fff", borderColor: "#E4E3E0", boxShadow: "0 10px 25px -5px rgba(0,0,0,0.1)" }}>
                         {/* Modal Header */}
                         <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: "#E4E3E0" }}>
                             <span style={{ fontSize: 15, fontWeight: 500, color: "#1C1C24" }}>
-                                {editingSupplier ? `Modify Channel Parameters (${editingSupplier.name})` : "Provision New Supplier"}
+                                {editingCustomer ? `Modify Client Parameters (${editingCustomer.name})` : "Register New Client Profile"}
                             </span>
                             <button onClick={() => setIsFormModalOpen(false)} className="border-0 bg-transparent text-[#9B9BA8] cursor-pointer">
                                 <IconX size={18} />
@@ -301,53 +310,57 @@ export default function SuppliersPage() {
 
                         {/* Modal Body Form */}
                         <form onSubmit={handleFormSubmit} style={{ padding: 20 }} className="flex flex-col gap-4">
-                            {/* Supplier Name */}
+                            {/* Input Field: Name */}
                             <div className="flex flex-col gap-1.5">
-                                <label style={{ fontSize: 12, fontWeight: 500, color: "#6B6B7A" }}>Company / Supplier Name</label>
+                                <label style={{ fontSize: 12, fontWeight: 500, color: "#6B6B7A" }}>Full Client Name</label>
                                 <input
-                                    type="text" required
-                                    placeholder="e.g., East Leather Distribution"
+                                    type="text"
+                                    required
+                                    placeholder="e.g., Youcef Benelkadi"
                                     value={formData.name}
                                     onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                                     style={{ width: "100%", height: 36, padding: "0 12px", fontSize: 13, borderRadius: 8, border: "1px solid #E4E3E0", background: "#F7F6F3", color: "#1C1C24", outline: "none" }}
                                 />
                             </div>
 
-                            {/* Mobile Number */}
+                            {/* Input Field: Phone */}
                             <div className="flex flex-col gap-1.5">
                                 <label style={{ fontSize: 12, fontWeight: 500, color: "#6B6B7A" }}>Phone Contact</label>
                                 <input
                                     type="text"
-                                    placeholder="e.g., 0555000000 (Optional)"
+                                    placeholder="e.g., 0661000000 (Optional)"
                                     value={formData.phone_number}
                                     onChange={(e) => setFormData({ ...formData, phone_number: e.target.value })}
                                     style={{ width: "100%", height: 36, padding: "0 12px", fontSize: 13, borderRadius: 8, border: "1px solid #E4E3E0", background: "#F7F6F3", color: "#1C1C24", outline: "none" }}
                                 />
                             </div>
 
-                            {/* Headquarters Location Address */}
+                            {/* Input Field: Address */}
                             <div className="flex flex-col gap-1.5">
-                                <label style={{ fontSize: 12, fontWeight: 500, color: "#6B6B7A" }}>Logistics / Address Headquarters</label>
+                                <label style={{ fontSize: 12, fontWeight: 500, color: "#6B6B7A" }}>Geographic Address</label>
                                 <input
                                     type="text"
-                                    placeholder="e.g., El Eulma, Setif (Optional)"
+                                    placeholder="e.g., Cite 5 Juillet, Constantine (Optional)"
                                     value={formData.address}
                                     onChange={(e) => setFormData({ ...formData, address: e.target.value })}
                                     style={{ width: "100%", height: 36, padding: "0 12px", fontSize: 13, borderRadius: 8, border: "1px solid #E4E3E0", background: "#F7F6F3", color: "#1C1C24", outline: "none" }}
                                 />
                             </div>
 
-                            {/* Starting Outstanding Debt Balance */}
-                            {!editingSupplier && (
+                            {/* Starting Debt Field — Only applicable on explicit creation layout */}
+                            {!editingCustomer && (
                                 <div className="flex flex-col gap-1.5">
-                                    <label style={{ fontSize: 12, fontWeight: 500, color: "#6B6B7A" }}>Starting Outstanding Debt Balance (DA)</label>
+                                    <label style={{ fontSize: 12, fontWeight: 500, color: "#6B6B7A" }}>Initial Open Credit Debt (DA)</label>
                                     <input
-                                        type="number" min="0" step="any"
-                                        placeholder="0"
+                                        type="number"
+                                        step="0.01"
+                                        min="0"
+                                        placeholder="0.00"
                                         value={formData.initial_debt}
                                         onChange={(e) => setFormData({ ...formData, initial_debt: e.target.value })}
-                                        style={{ width: "100%", height: 36, padding: "0 12px", fontSize: 13, borderRadius: 8, border: "1px solid #E4E3E0", background: "#F7F6F3", color: "#1C1C24", outline: "none" }}
+                                        style={{ width: "100%", height: 36, padding: "0 12px", fontSize: 13, fontWeight: "600", borderRadius: 8, border: "1px solid #E4E3E0", background: "#F7F6F3", color: "#E24B4A", outline: "none" }}
                                     />
+                                    <p style={{ fontSize: 11, color: "#9B9BA8", marginTop: -2 }}>Sets baseline starting liabilities for open credit tabs.</p>
                                 </div>
                             )}
 
@@ -383,9 +396,9 @@ export default function SuppliersPage() {
                                 <IconAlertTriangle size={24} />
                             </div>
                             <div>
-                                <h3 style={{ fontSize: 15, fontWeight: 500, color: "#1C1C24" }}>Remove Trading Partner?</h3>
+                                <h3 style={{ fontSize: 15, fontWeight: 500, color: "#1C1C24" }}>Purge Client Profile?</h3>
                                 <p style={{ fontSize: 12, color: "#6B6B7A", marginTop: 4, lineHeight: 1.4 }}>
-                                    Are you sure you want to completely remove <strong style={{ color: "#1C1C24" }}>{deletingSupplier?.name}</strong>? This will instantly break supply record paths tied to this vendor account node.
+                                    Are you sure you want to completely clear <strong style={{ color: "#1C1C24" }}>{deletingCustomer?.name}</strong>? This operation erases matching account balance metadata completely.
                                 </p>
                             </div>
 
@@ -396,7 +409,7 @@ export default function SuppliersPage() {
                                     className="flex-1 h-9 rounded-lg border bg-transparent cursor-pointer text-[#6B6B7A]"
                                     style={{ fontSize: 13, borderColor: "#E4E3E0" }}
                                 >
-                                    Keep Partner
+                                    Keep File
                                 </button>
                                 <button
                                     onClick={handleDeleteConfirm}
@@ -405,7 +418,7 @@ export default function SuppliersPage() {
                                     className="flex-1 h-9 rounded-lg text-white border-0 cursor-pointer font-medium"
                                     style={{ fontSize: 13, background: confirmDeleteHover ? "#C33F3E" : "#E24B4A", transition: "background 0.15s" }}
                                 >
-                                    Disconnect Node
+                                    Delete Profile
                                 </button>
                             </div>
                         </div>

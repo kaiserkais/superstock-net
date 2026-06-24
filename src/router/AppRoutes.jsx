@@ -6,6 +6,9 @@ import Login from '../pages/Login'; // 👈 Make sure to import your Login compo
 import useAuthStore from '../store/useAuthStore'; // 👈 Import your Zustand auth store
 import Staff from '../pages/Staff/Staff';
 import SuppliersPage from '../pages/suppliers/SuppliersPage';
+import Customers from '../pages/Customers/Customers';
+import Products from '../pages/Products/Products';
+import AddProduct from '../pages/Products/AddProduct';
 
 // --- ROUTE SAFEGUARDS ---
 
@@ -57,6 +60,18 @@ const router = createHashRouter([
       {
         path: "suppliers",
         element: <SuppliersPage />,
+      },
+      {
+        path: "customers",
+        element: <Customers />,
+      },
+      {
+        path: "products",
+        element: <Products />,
+      },
+      {
+        path: "add-product",
+        element: <AddProduct />,
       }
     ],
   },

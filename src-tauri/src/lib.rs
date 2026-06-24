@@ -4,6 +4,7 @@ mod staff;
 mod routes;
 mod handlers; // <-- Declares the new modular handler file
 mod suppliers;
+mod customers;
 
 use std::net::SocketAddr;
 use mdns_sd::{ServiceDaemon, ServiceInfo, ServiceEvent};

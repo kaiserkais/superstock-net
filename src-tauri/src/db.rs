@@ -70,7 +70,7 @@ async fn create_schemas(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     );";
     sqlx::query(user_table).execute(pool).await?;
 
-    // 3. Suppliers Table 👈 NEW STRUCTURE
+    // 3. Suppliers Table
     let supplier_table = "CREATE TABLE IF NOT EXISTS suppliers (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
@@ -79,6 +79,16 @@ async fn create_schemas(pool: &SqlitePool) -> Result<(), sqlx::Error> {
         total_debt REAL NOT NULL DEFAULT 0.0
     );";
     sqlx::query(supplier_table).execute(pool).await?;
+
+    // 4. Customers Table 👈 NEW STRUCTURE
+    let customer_table = "CREATE TABLE IF NOT EXISTS customers (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        phone_number TEXT,
+        address TEXT,
+        total_debt REAL NOT NULL DEFAULT 0.0
+    );";
+    sqlx::query(customer_table).execute(pool).await?;
 
     Ok(())
 }
@@ -112,7 +122,7 @@ async fn seed_default_data(pool: &SqlitePool) -> Result<(), sqlx::Error> {
         println!("👤 Default account generated successfully -> Username: admin | Password: admin");
     }
 
-    // Seed Suppliers 👈 NEW SEED DATA
+    // Seed Suppliers
     let supplier_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM suppliers").fetch_one(pool).await.unwrap_or(0);
     if supplier_count == 0 {
         let seed_supplier = "INSERT INTO suppliers (id, name, phone_number, address, total_debt) VALUES (?, ?, ?, ?, ?)";
@@ -121,11 +131,27 @@ async fn seed_default_data(pool: &SqlitePool) -> Result<(), sqlx::Error> {
             .bind("Wholesale Footwear Co.")
             .bind("0555112233")
             .bind("Alger, Centre")
-            .bind(45000.0) // Sample initial debt balance
+            .bind(45000.0)
             .execute(pool)
             .await?;
         
         println!("📦 Seed supplier inserted successfully -> Name: Wholesale Footwear Co. | Initial Debt: 45000.0");
+    }
+
+    // Seed Customers 👈 NEW SEED DATA
+    let customer_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM customers").fetch_one(pool).await.unwrap_or(0);
+    if customer_count == 0 {
+        let seed_customer = "INSERT INTO customers (id, name, phone_number, address, total_debt) VALUES (?, ?, ?, ?, ?)";
+        sqlx::query(seed_customer)
+            .bind("c1")
+            .bind("Amine Belkacem")
+            .bind("0666123456")
+            .bind("Constantine")
+            .bind(2500.0) // Sample open customer tabs/debt ledger balance
+            .execute(pool)
+            .await?;
+        
+        println!("👥 Seed customer inserted successfully -> Name: Amine Belkacem | Initial Debt: 2500.0");
     }
 
     Ok(())
