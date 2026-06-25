@@ -33,24 +33,6 @@ async fn handle_socket(mut socket: WebSocket, state: Arc<AppState>) {
     });
 }
 
-pub async fn get_products(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
-    let rows = sqlx::query("SELECT id, name, price, stock FROM products")
-        .fetch_all(&state.db)
-        .await
-        .unwrap();
-        
-    let mut products = vec![];
-    for row in rows {
-        products.push(serde_json::json!({
-            "id": row.get::<String, _>("id"),
-            "name": row.get::<String, _>("name"),
-            "price": row.get::<f64, _>("price"),
-            "stock": row.get::<i32, _>("stock"),
-        }));
-    }
-    Json(serde_json::json!(products))
-}
-
 pub async fn simulate_sale(State(state): State<Arc<AppState>>) -> &'static str {
     let _ = sqlx::query("UPDATE products SET stock = MAX(0, stock - 1) WHERE id = 'p1'")
         .execute(&state.db)

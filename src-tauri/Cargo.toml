@@ -23,8 +23,8 @@ tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }
-axum = { version = "0.7", features = ["ws"] }
-tower-http = { version = "0.5", features = ["cors"] } # For cross-origin requests from client terminals
+axum = { version = "0.7", features = ["ws", "multipart"] }
+tower-http = { version = "0.5", features = ["cors", "fs"] } # For cross-origin requests from client terminals
 mdns-sd = "0.11"
 sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio"] }
 bcrypt = "0.15"
