@@ -52,10 +52,11 @@ pub async fn init_database() -> Option<SqlitePool> {
 }
 
 async fn create_schemas(pool: &SqlitePool) -> Result<(), sqlx::Error> {
-    // 1. Categories Table (Prerequisite for Product Mapping)
+    // 1. Categories Table (Updated with optional description/small desc field)
     let category_table = "CREATE TABLE IF NOT EXISTS categories (
         id TEXT PRIMARY KEY,
-        name TEXT NOT NULL UNIQUE
+        name TEXT NOT NULL UNIQUE,
+        description TEXT -- Can be NULL (Small descriptive text asset)
     );";
     sqlx::query(category_table).execute(pool).await?;
 
@@ -133,11 +134,11 @@ async fn seed_default_data(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     // Seed Categories
     let cat_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM categories").fetch_one(pool).await.unwrap_or(0);
     if cat_count == 0 {
-        sqlx::query("INSERT INTO categories (id, name) VALUES (?, ?), (?, ?)")
-            .bind("cat_1").bind("Footwear / Shoes")
-            .bind("cat_2").bind("Traditional Clothing")
+        sqlx::query("INSERT INTO categories (id, name, description) VALUES (?, ?, ?), (?, ?, ?)")
+            .bind("cat_1").bind("Footwear / Shoes").bind("Sneakers, casual shoes, and premium leather boots")
+            .bind("cat_2").bind("Traditional Clothing").bind("Algerian traditional dresses, accessories, and seasonal items")
             .execute(pool).await?;
-        println!("📝 Reference Category Segments inserted successfully.");
+        println!("_ Reference Category Segments inserted successfully.");
     }
 
     // Seed Users
@@ -149,7 +150,7 @@ async fn seed_default_data(pool: &SqlitePool) -> Result<(), sqlx::Error> {
         sqlx::query("INSERT INTO users (id, username, password_hash, phone_number, role) VALUES (?, ?, ?, ?, ?)")
             .bind("u1").bind("admin").bind(admin_password_hash).bind("0555000000").bind("admin")
             .execute(pool).await?;
-        println!("👤 Default account generated cleanly -> Username: admin | Password: admin");
+        println!("_ Default account generated cleanly -> Username: admin | Password: admin");
     }
 
     // Seed Suppliers
@@ -158,7 +159,7 @@ async fn seed_default_data(pool: &SqlitePool) -> Result<(), sqlx::Error> {
         sqlx::query("INSERT INTO suppliers (id, name, phone_number, address, total_debt) VALUES (?, ?, ?, ?, ?)")
             .bind("s1").bind("El Hamiz Wholesale Center").bind("0555112233").bind("Alger, Centre").bind(45000.0)
             .execute(pool).await?;
-        println!("📦 Seed supplier linked to primary index registry.");
+        println!("_ Seed supplier linked to primary index registry.");
     }
 
     // Seed Customers
@@ -167,13 +168,12 @@ async fn seed_default_data(pool: &SqlitePool) -> Result<(), sqlx::Error> {
         sqlx::query("INSERT INTO customers (id, name, phone_number, address, total_debt) VALUES (?, ?, ?, ?, ?)")
             .bind("c1").bind("Amine Belkacem").bind("0666123456").bind("Constantine").bind(2500.0)
             .execute(pool).await?;
-        println!("👥 Seed customer balance files logged.");
+        println!("_ Seed customer balance files logged.");
     }
 
     // Seed Products & Matrix Variations
     let prod_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM products").fetch_one(pool).await.unwrap_or(0);
     if prod_count == 0 {
-        // A. Insert Standard (Simple) Product
         sqlx::query(
             "INSERT INTO products (id, name, product_type, reference, codebar, quantity, product_cost, selling_price_1, selling_price_2, selling_price_3, selling_price_4, measurement_unit, category_id, supplier_id) 
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
@@ -182,7 +182,6 @@ async fn seed_default_data(pool: &SqlitePool) -> Result<(), sqlx::Error> {
         .bind(12).bind(11000.0).bind(15000.0).bind(14000.0).bind(13500.0).bind(13000.0).bind("pcs").bind("cat_1").bind("s1")
         .execute(pool).await?;
 
-        // B. Insert Variable Parent Product Entry
         sqlx::query(
             "INSERT INTO products (id, name, product_type, reference, codebar, quantity, product_cost, selling_price_1, selling_price_2, selling_price_3, selling_price_4, measurement_unit, category_id, supplier_id) 
              VALUES (?, ?, ?, ?, NULL, 0, 8500.0, 12000.0, 11000.0, 10500.0, 10000.0, 'pcs', 'cat_1', 's1')"
@@ -190,7 +189,6 @@ async fn seed_default_data(pool: &SqlitePool) -> Result<(), sqlx::Error> {
         .bind("p_var_1").bind("Premium Suede Loafers").bind("variable").bind("SKU-LOAF-SR")
         .execute(pool).await?;
 
-        // C. Insert Child Rows Generated via Frontend Matrix Outputs
         sqlx::query(
             "INSERT INTO product_variants (id, product_id, variant_name, codebar, quantity, product_cost, selling_price_1) 
              VALUES 
@@ -201,7 +199,7 @@ async fn seed_default_data(pool: &SqlitePool) -> Result<(), sqlx::Error> {
         .bind("v_2").bind("p_var_1").bind("Premium Suede Loafers (42 - Black)").bind("613998877002").bind(8).bind(8500.0).bind(12000.0)
         .execute(pool).await?;
 
-        println!("📝 Seed products alongside target variation components generated perfectly.");
+        println!("_ Seed products alongside target variation components generated perfectly.");
     }
 
     Ok(())

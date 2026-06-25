@@ -29,7 +29,7 @@ const NAV_MAIN = [
     { Icon: IconLayoutDashboard, label: "Dashboard", badge: null },
     { Icon: IconCashRegister, label: "Sales / POS", badge: 3 },
     { Icon: IconBox, label: "Products", badge: null,to: "/products"  },
-    { Icon: IconClipboardList, label: "Inventory", badge: null },
+    { Icon: IconClipboardList, label: "Categories", badge: null,to: "/categories" },
     { Icon: IconUsers, label: "Customers", badge: null,to: "/customers" },
 ];
 

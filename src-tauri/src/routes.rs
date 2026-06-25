@@ -3,10 +3,12 @@ use axum::{
     Router,
 };
 use std::sync::Arc;
-use std::path::PathBuf; // Added for platform path generation
+use std::path::PathBuf;
 use tower_http::cors::CorsLayer;
-use tower_http::services::ServeDir; // Added for hosting local media folders
-use crate::{AppState, auth, staff, suppliers, handlers, customers, products}; 
+use tower_http::services::ServeDir;
+
+// Added categories module reference to match the others
+use crate::{AppState, auth, staff, suppliers, handlers, customers, products, categories}; 
 
 /// Helper function to resolve the identical native platform directory used by your DB storage
 fn get_system_image_dir() -> PathBuf {
@@ -26,10 +28,14 @@ pub fn create_router(shared_state: Arc<AppState>) -> Router {
         .route("/api/ping", get(handlers::ping_host))
         .route("/api/auth/login", post(auth::login_handler))
         
-        // Products Catalog Management (Updated to support creation payloads)
+        // Products Catalog Management
         .route("/api/products", get(products::get_products).post(products::create_product))
         .route("/api/products/:id", put(products::edit_product).delete(products::delete_product))
         .route("/api/simulate-sale", get(handlers::simulate_sale))
+        
+        // 📁 Category Tracking Management Registry
+        .route("/api/categories", get(categories::get_categories).post(categories::create_category))
+        .route("/api/categories/:id", put(categories::edit_category).delete(categories::delete_category))
         
         // Staff Management
         .route("/api/staff", get(staff::get_staff).post(staff::create_staff))
@@ -44,7 +50,6 @@ pub fn create_router(shared_state: Arc<AppState>) -> Router {
         .route("/api/customers/:id", put(customers::update_customer).delete(customers::delete_customer))
         
         // Static Asset Pipeline for Product Images
-        // ✅ FIXED: Now correctly reads files out of %APPDATA%/SuperStock/product_images
         .nest_service("/images", ServeDir::new(get_system_image_dir()))
         
         // Core Config & Layers

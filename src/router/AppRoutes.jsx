@@ -10,6 +10,7 @@ import Customers from '../pages/Customers/Customers';
 import Products from '../pages/Products/Products';
 import AddProduct from '../pages/Products/AddProduct';
 import EditProduct from '../pages/Products/EditProduct';
+import CategoriesPage from '../pages/Categories/Categories';
 
 // --- ROUTE SAFEGUARDS ---
 
@@ -67,6 +68,10 @@ const router = createHashRouter([
         element: <Customers />,
       },
       {
+        path: "categories",
+        element: <CategoriesPage />,
+      },
+      {
         path: "products",
         element: <Products />,
       },
@@ -74,7 +79,7 @@ const router = createHashRouter([
         path: "add-product",
         element: <AddProduct />,
       },
-      ,
+
       {
         path: "edit-product/:id",
         element: <EditProduct />,
