@@ -209,7 +209,7 @@ export default function Products() {
                                                     
                                                     <td className="p-3.5 text-right">
                                                         <div className="flex items-center justify-end gap-1.5">
-                                                            <button className="p-1.5 rounded-lg border bg-transparent cursor-pointer text-[#6B6B7A]" style={{ borderColor: "#E4E3E0" }}>
+                                                            <button onClick={() => navigate(`/edit-product/${p.id}`)} className="p-1.5 rounded-lg border bg-transparent cursor-pointer text-[#6B6B7A]" style={{ borderColor: "#E4E3E0" }}>
                                                                 <IconPencil size={15} />
                                                             </button>
                                                             <button onClick={() => setDeletingProduct(p)} className="p-1.5 rounded-lg border bg-transparent cursor-pointer text-[#E24B4A]" style={{ borderColor: "#E4E3E0" }}>

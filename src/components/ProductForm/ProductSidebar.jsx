@@ -2,6 +2,7 @@ import React from "react";
 import { IconPackage, IconUpload } from "@tabler/icons-react";
 
 export default function ProductSidebar({ productType, setProductType, baseForm, setBaseForm, imagePreview, handleFileStreamInject }) {
+    const BACKEND_URL = "http://localhost:8080";
     return (
         <div className="flex flex-col gap-6">
             <div className="p-4 rounded-xl border bg-[#F7F6F3] flex flex-col gap-3" style={{ borderColor: "#E4E3E0" }}>
@@ -43,7 +44,7 @@ export default function ProductSidebar({ productType, setProductType, baseForm, 
                 <div style={{ fontSize: 13, fontWeight: 600, color: "#1C1C24" }}>Visual Representation File</div>
                 <div className="flex items-center gap-3">
                     <div style={{ width: 56, height: 56, borderRadius: 8, border: "1px solid #E4E3E0", background: "#F7F6F3" }} className="flex items-center justify-center overflow-hidden shrink-0">
-                        {imagePreview ? <img src={imagePreview} alt="Preview" className="w-full h-full object-cover" /> : <IconPackage style={{ color: "#9B9BA8" }} />}
+                        {imagePreview ? <img src={imagePreview ? `${BACKEND_URL}${imagePreview}` : "/placeholder.png"} alt="Preview" className="w-full h-full object-cover" /> : <IconPackage style={{ color: "#9B9BA8" }} />}
                     </div>
                     <label className="flex-1 flex items-center justify-center gap-1.5 h-9 rounded-lg border text-xs font-semibold cursor-pointer hover:bg-gray-50" style={{ borderColor: "#E4E3E0", color: "#1C1C24" }}>
                         <IconUpload size={14} /> Upload Binary Image

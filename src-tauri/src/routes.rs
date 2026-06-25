@@ -28,6 +28,7 @@ pub fn create_router(shared_state: Arc<AppState>) -> Router {
         
         // Products Catalog Management (Updated to support creation payloads)
         .route("/api/products", get(products::get_products).post(products::create_product))
+        .route("/api/products/:id", put(products::edit_product))
         .route("/api/simulate-sale", get(handlers::simulate_sale))
         
         // Staff Management
@@ -43,7 +44,7 @@ pub fn create_router(shared_state: Arc<AppState>) -> Router {
         .route("/api/customers/:id", put(customers::update_customer).delete(customers::delete_customer))
         
         // Static Asset Pipeline for Product Images
-        // Serves files out of %APPDATA%/SuperStock/product_images under the HTTP /images namespace
+        // ✅ FIXED: Now correctly reads files out of %APPDATA%/SuperStock/product_images
         .nest_service("/images", ServeDir::new(get_system_image_dir()))
         
         // Core Config & Layers

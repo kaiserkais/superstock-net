@@ -9,6 +9,7 @@ import SuppliersPage from '../pages/suppliers/SuppliersPage';
 import Customers from '../pages/Customers/Customers';
 import Products from '../pages/Products/Products';
 import AddProduct from '../pages/Products/AddProduct';
+import EditProduct from '../pages/Products/EditProduct';
 
 // --- ROUTE SAFEGUARDS ---
 
@@ -72,6 +73,11 @@ const router = createHashRouter([
       {
         path: "add-product",
         element: <AddProduct />,
+      },
+      ,
+      {
+        path: "edit-product/:id",
+        element: <EditProduct />,
       }
     ],
   },
