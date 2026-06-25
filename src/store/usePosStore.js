@@ -190,8 +190,10 @@ const usePosStore = create(
     // ── Cart ──────────────────────────────────────────────────────────────────
     cartItems: [],         // [{ cartId, productId, variantId?, name, qty, unit, unitPrice, cost, lineTotal, isWeighted }]
     cartClient: null,      // assigned client object
-    cartTotal: 0,          // editable override (null = auto from items)
-    cartTotalOverride: false,
+    // Adjustment: { type: 'discount' | 'surcharge', value: number (DA) }
+    // discount → subtracted from subtotal and shown as a separate line
+    // surcharge → added on top (e.g. delivery, fee)
+    cartAdjustment: { type: "discount", value: 0 },
 
     // ── Parked carts ──────────────────────────────────────────────────────────
     parkedCarts: [],       // [{ id, items, client, total, parkedAt, label }]
@@ -346,18 +348,16 @@ const usePosStore = create(
       });
     },
 
-    /** Set cart total override */
-    setTotalOverride: (value) => {
+    /** Set a discount or surcharge on the cart total */
+    setCartAdjustment: (type, value) => {
       set((state) => {
-        state.cartTotal = value;
-        state.cartTotalOverride = true;
+        state.cartAdjustment = { type, value: Math.max(0, value) };
       });
     },
 
-    clearTotalOverride: () => {
+    clearCartAdjustment: () => {
       set((state) => {
-        state.cartTotalOverride = false;
-        _recalcTotal(state);
+        state.cartAdjustment = { type: "discount", value: 0 };
       });
     },
 
@@ -382,8 +382,7 @@ const usePosStore = create(
           id: uuid(),
           items: JSON.parse(JSON.stringify(state.cartItems)),
           client: state.cartClient,
-          total: state.cartTotal,
-          totalOverride: state.cartTotalOverride,
+          adjustment: { ...state.cartAdjustment },
           parkedAt: new Date().toISOString(),
           label: state.cartClient
             ? state.cartClient.name
@@ -391,8 +390,7 @@ const usePosStore = create(
         });
         state.cartItems = [];
         state.cartClient = null;
-        state.cartTotal = 0;
-        state.cartTotalOverride = false;
+        state.cartAdjustment = { type: "discount", value: 0 };
       });
     },
 
@@ -408,8 +406,7 @@ const usePosStore = create(
             id: uuid(),
             items: JSON.parse(JSON.stringify(state.cartItems)),
             client: state.cartClient,
-            total: state.cartTotal,
-            totalOverride: state.cartTotalOverride,
+            adjustment: { ...state.cartAdjustment },
             parkedAt: new Date().toISOString(),
             label: state.cartClient
               ? state.cartClient.name
@@ -420,8 +417,7 @@ const usePosStore = create(
         const restored = state.parkedCarts[idx];
         state.cartItems = restored.items;
         state.cartClient = restored.client;
-        state.cartTotal = restored.total;
-        state.cartTotalOverride = restored.totalOverride;
+        state.cartAdjustment = restored.adjustment ?? { type: "discount", value: 0 };
 
         // Remove from parked
         state.parkedCarts.splice(idx, 1);
@@ -444,8 +440,7 @@ const usePosStore = create(
         // For now just clear
         state.cartItems = [];
         state.cartClient = null;
-        state.cartTotal = 0;
-        state.cartTotalOverride = false;
+        state.cartAdjustment = { type: "discount", value: 0 };
       });
     },
 
@@ -453,8 +448,7 @@ const usePosStore = create(
       set((state) => {
         state.cartItems = [];
         state.cartClient = null;
-        state.cartTotal = 0;
-        state.cartTotalOverride = false;
+        state.cartAdjustment = { type: "discount", value: 0 };
       });
     },
 
@@ -589,10 +583,38 @@ const usePosStore = create(
       return { products: visible, hasMore: visible.length < total, total };
     },
 
+    getCartSubtotal: () => {
+      return get().cartItems.reduce((s, i) => s + i.lineTotal, 0);
+    },
+
+    /** Returns { subtotal, adjustmentAmount, total }
+     *  adjustmentAmount is positive = discount (subtracted), negative = surcharge (added)
+     *  Use this in CartPanel to render all three lines. */
+    getCartTotals: () => {
+      const { cartItems, cartAdjustment } = get();
+      const subtotal = cartItems.reduce((s, i) => s + i.lineTotal, 0);
+      const adj = cartAdjustment.value || 0;
+      const total =
+        cartAdjustment.type === "discount"
+          ? Math.max(0, subtotal - adj)
+          : subtotal + adj;
+      return {
+        subtotal,
+        adjustmentType: cartAdjustment.type,   // 'discount' | 'surcharge'
+        adjustmentValue: adj,                   // raw DA value
+        hasAdjustment: adj > 0,
+        total,
+      };
+    },
+
+    // Kept for backward compat (barcode flash etc.)
     getCartTotal: () => {
-      const { cartItems, cartTotal, cartTotalOverride } = get();
-      if (cartTotalOverride) return cartTotal;
-      return cartItems.reduce((s, i) => s + i.lineTotal, 0);
+      const { cartItems, cartAdjustment } = get();
+      const subtotal = cartItems.reduce((s, i) => s + i.lineTotal, 0);
+      const adj = cartAdjustment.value || 0;
+      return cartAdjustment.type === "discount"
+        ? Math.max(0, subtotal - adj)
+        : subtotal + adj;
     },
 
     getCartItemCount: () => {
@@ -601,11 +623,10 @@ const usePosStore = create(
   }))
 );
 
-// ── Internal helper: recalculate total from items (mutates immer draft) ───────
-function _recalcTotal(state) {
-  if (!state.cartTotalOverride) {
-    state.cartTotal = state.cartItems.reduce((s, i) => s + i.lineTotal, 0);
-  }
+// ── Internal helper: recalculate subtotal from items (mutates immer draft) ────
+// Note: adjustment is applied at read-time via getCartTotals(), not stored here
+function _recalcTotal(_state) {
+  // no-op — subtotal is derived live from cartItems in getCartTotals()
 }
 
 export default usePosStore;
