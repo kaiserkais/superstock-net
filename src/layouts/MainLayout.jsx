@@ -27,7 +27,7 @@ import { Outlet, Link } from "react-router-dom";
 // ─── Nav config ───────────────────────────────────────────────────────────────
 const NAV_MAIN = [
     { Icon: IconLayoutDashboard, label: "Dashboard", badge: null },
-    { Icon: IconCashRegister, label: "Sales / POS", badge: 3 },
+    { Icon: IconCashRegister, label: "pos", badge: 3 ,to: "/pos"},
     { Icon: IconBox, label: "Products", badge: null,to: "/products"  },
     { Icon: IconClipboardList, label: "Categories", badge: null,to: "/categories" },
     { Icon: IconUsers, label: "Customers", badge: null,to: "/customers" },
@@ -210,33 +210,7 @@ function Topbar({ open, onToggle, activePage }) {
                 <strong style={{ color: "#1C1C24", fontWeight: 500 }}>{activePage}</strong>
             </nav>
 
-            {/* Search */}
-            <div className="relative flex-1 max-w-sm ml-2">
-                <IconSearch
-                    size={16} stroke={1.75} aria-hidden="true"
-                    style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "#9B9BA8" }}
-                />
-                <input
-                    type="search"
-                    placeholder="Search products, orders, customers…"
-                    aria-label="Global search"
-                    onFocus={() => setSearchFocused(true)}
-                    onBlur={() => setSearchFocused(false)}
-                    style={{
-                        width: "100%",
-                        height: 34,
-                        paddingLeft: 32,
-                        paddingRight: 12,
-                        fontSize: 13,
-                        borderRadius: 8,
-                        border: `1px solid ${searchFocused ? "#E8A04B" : "#E4E3E0"}`,
-                        background: searchFocused ? "#fff" : "#F7F6F3",
-                        color: "#1C1C24",
-                        outline: "none",
-                    }}
-                />
-            </div>
-
+            
             {/* Right actions */}
             <div className="flex items-center gap-2 ml-auto">
                 <IconButton Icon={IconBell} label="Notifications" dot={true} />

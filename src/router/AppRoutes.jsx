@@ -11,6 +11,7 @@ import Products from '../pages/Products/Products';
 import AddProduct from '../pages/Products/AddProduct';
 import EditProduct from '../pages/Products/EditProduct';
 import CategoriesPage from '../pages/Categories/Categories';
+import PosPage from '../pages/PosPage';
 
 // --- ROUTE SAFEGUARDS ---
 
@@ -83,6 +84,11 @@ const router = createHashRouter([
       {
         path: "edit-product/:id",
         element: <EditProduct />,
+      },
+
+      {
+        path: "pos",
+        element: <PosPage />,
       }
     ],
   },
