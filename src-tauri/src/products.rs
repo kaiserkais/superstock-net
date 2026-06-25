@@ -1,11 +1,17 @@
 use crate::AppState;
-use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
+use axum::{
+    extract::{Path, State},
+    http::StatusCode,
+    response::IntoResponse,
+    Json,
+};
 use sqlx::Row;
 use std::sync::Arc;
 
 // Import the Axum multipart extractor
 use axum::extract::Multipart;
-use axum::extract::Path;
+
+use std::path::PathBuf;
 
 // ─── SERIALIZATION STRUCTS FOR JSON OUTPUTS ──────────────────────────────
 
@@ -50,7 +56,24 @@ pub struct VariantInput {
     pub quantity: String,
 }
 
+// ─── HELPER FUNCTION FOR STORAGE PATHS ────────────────────────────────────
+fn get_storage_dir() -> PathBuf {
+    let mut base_dir = match std::env::var("APPDATA") {
+        Ok(path) => PathBuf::from(path).join("SuperStock"),
+        Err(_) => {
+            let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+            PathBuf::from(home)
+                .join(".local")
+                .join("share")
+                .join("SuperStock")
+        }
+    };
+    base_dir.push("product_images");
+    base_dir
+}
+
 // ─── ROUTE HANDLERS ──────────────────────────────────────────────────────
+
 /// PUT /api/products/:id - Update an existing product asset alongside its variations matrix
 pub async fn edit_product(
     State(state): State<Arc<AppState>>,
@@ -74,6 +97,19 @@ pub async fn edit_product(
 
     let mut image_bytes: Option<Vec<u8>> = None;
     let mut image_ext = String::from("jpg");
+
+    // Fetch the existing image path from the database before performing any updates
+    let old_image_path: Option<String> = match sqlx::query_scalar("SELECT image_path FROM products WHERE id = ?")
+        .bind(&id)
+        .fetch_optional(&state.db)
+        .await
+    {
+        Ok(res) => res,
+        Err(e) => {
+            println!("❌ Failed to fetch existing product image details: {}", e);
+            None
+        }
+    };
 
     // Loop through streaming data fields sequentially
     while let Ok(Some(field)) = multipart.next_field().await {
@@ -99,8 +135,20 @@ pub async fn edit_product(
             match field_name.as_str() {
                 "name" => name = text_value,
                 "product_type" => product_type = text_value,
-                "reference" => reference = if text_value.trim().is_empty() { None } else { Some(text_value) },
-                "codebar" => codebar = if text_value.trim().is_empty() { None } else { Some(text_value) },
+                "reference" => {
+                    reference = if text_value.trim().is_empty() {
+                        None
+                    } else {
+                        Some(text_value)
+                    }
+                }
+                "codebar" => {
+                    codebar = if text_value.trim().is_empty() {
+                        None
+                    } else {
+                        Some(text_value)
+                    }
+                }
                 "quantity" => quantity = Some(text_value),
                 "product_cost" => product_cost = text_value,
                 "selling_price_1" => selling_price_1 = text_value,
@@ -126,20 +174,25 @@ pub async fn edit_product(
     // Process new image stream if provided
     let mut final_image_path: Option<String> = None;
     if let Some(bytes) = image_bytes {
-        let base_dir = match std::env::var("APPDATA") {
-            Ok(path) => std::path::PathBuf::from(path).join("SuperStock"),
-            Err(_) => {
-                let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-                std::path::PathBuf::from(home).join(".local").join("share").join("SuperStock")
-            }
-        };
-        let target_dir = base_dir.join("product_images");
+        let target_dir = get_storage_dir();
 
         if tokio::fs::create_dir_all(&target_dir).await.is_ok() {
             let file_name = format!("{}.{}", id, image_ext);
             let absolute_filepath = target_dir.join(&file_name);
             if tokio::fs::write(&absolute_filepath, bytes).await.is_ok() {
-                final_image_path = Some(file_name);
+                final_image_path = Some(file_name.clone());
+
+                // Sanitation: If an old image existed and has a different filename/extension, remove it
+                if let Some(ref old_path) = old_image_path {
+                    if old_path != &file_name {
+                        let mut old_file_path = get_storage_dir();
+                        old_file_path.push(old_path);
+                        if old_file_path.exists() && old_file_path.is_file() {
+                            let _ = std::fs::remove_file(&old_file_path);
+                            println!("🗑️ Obsolete image asset safely replaced: {}", old_path);
+                        }
+                    }
+                }
             }
         }
     }
@@ -160,7 +213,7 @@ pub async fn edit_product(
              measurement_unit = ?, category_id = ?, supplier_id = ?, image_path = ? WHERE id = ?"
         )
         .bind(&name).bind(&product_type).bind(&reference)
-        .bind(codebar.clone()) //leave main codebar was like this if product_type == "simple" { codebar.clone() } else { None }
+        .bind(codebar.clone())
         .bind(if product_type == "simple" { base_qty } else { 0 })
         .bind(cost).bind(p1).bind(p2).bind(p3).bind(p4)
         .bind(&measurement_unit).bind(&category_id).bind(&supplier_id)
@@ -174,7 +227,7 @@ pub async fn edit_product(
              measurement_unit = ?, category_id = ?, supplier_id = ? WHERE id = ?"
         )
         .bind(&name).bind(&product_type).bind(&reference)
-        .bind(codebar.clone()) // leave main code bar was like this if product_type == "simple" { codebar.clone() } else { None }
+        .bind(codebar.clone())
         .bind(if product_type == "simple" { base_qty } else { 0 })
         .bind(cost).bind(p1).bind(p2).bind(p3).bind(p4)
         .bind(&measurement_unit).bind(&category_id).bind(&supplier_id)
@@ -189,7 +242,11 @@ pub async fn edit_product(
     }
 
     // Step B: Clear old variants to rewrite updated layout
-    if let Err(e) = sqlx::query("DELETE FROM product_variants WHERE product_id = ?").bind(&id).execute(&mut *tx).await {
+    if let Err(e) = sqlx::query("DELETE FROM product_variants WHERE product_id = ?")
+        .bind(&id)
+        .execute(&mut *tx)
+        .await
+    {
         println!("❌ Failed to prune historical combination rows: {}", e);
         return (StatusCode::INTERNAL_SERVER_ERROR, "Variant sync failure").into_response();
     }
@@ -198,7 +255,10 @@ pub async fn edit_product(
     if product_type == "variable" {
         if let Some(raw_json_str) = variations_raw {
             if let Ok(variations_list) = serde_json::from_str::<Vec<VariantInput>>(&raw_json_str) {
-                let current_timestamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_micros();
+                let current_timestamp = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_micros();
                 for (idx, var) in variations_list.iter().enumerate() {
                     let generated_variant_id = format!("v_{}_{}", current_timestamp, idx);
                     let v_cost: f64 = var.product_cost.parse().unwrap_or(cost);
@@ -214,7 +274,11 @@ pub async fn edit_product(
 
                     if let Err(e) = insert_var_result {
                         println!("❌ Combinatorial matrix write interrupted: {}", e);
-                        return (StatusCode::BAD_REQUEST, "Combination model contains an identical codebar constraint").into_response();
+                        return (
+                            StatusCode::BAD_REQUEST,
+                            "Combination model contains an identical codebar constraint",
+                        )
+                            .into_response();
                     }
                 }
             }
@@ -223,17 +287,26 @@ pub async fn edit_product(
 
     if let Err(e) = tx.commit().await {
         println!("❌ Transaction confirmation collapsed: {}", e);
-        return (StatusCode::INTERNAL_SERVER_ERROR, "Storage write checkpoint dropped").into_response();
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Storage write checkpoint dropped",
+        )
+            .into_response();
     }
 
-    (StatusCode::OK, Json(serde_json::json!({ "id": id, "status": "updated" }))).into_response()
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({ "id": id, "status": "updated" })),
+    )
+        .into_response()
 }
+
 /// GET /api/products - Lists all catalog products alongside nested child combinations
 pub async fn get_products(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let prod_rows_result = sqlx::query(
         "SELECT id, name, product_type, reference, codebar, quantity, product_cost, \
                 selling_price_1, selling_price_2, selling_price_3, selling_price_4, \
-                measurement_unit, category_id, supplier_id, image_path FROM products", // 👈 Added image_path here
+                measurement_unit, category_id, supplier_id, image_path FROM products",
     )
     .fetch_all(&state.db)
     .await;
@@ -242,7 +315,11 @@ pub async fn get_products(State(state): State<Arc<AppState>>) -> impl IntoRespon
         Ok(rows) => rows,
         Err(e) => {
             println!("❌ Database read failure on products catalog: {}", e);
-            return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to load master products").into_response();
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to load master products",
+            )
+                .into_response();
         }
     };
 
@@ -256,7 +333,11 @@ pub async fn get_products(State(state): State<Arc<AppState>>) -> impl IntoRespon
         Ok(rows) => rows,
         Err(e) => {
             println!("❌ Database read failure on variations matrix: {}", e);
-            return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to load variant matrices").into_response();
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to load variant matrices",
+            )
+                .into_response();
         }
     };
 
@@ -295,7 +376,7 @@ pub async fn get_products(State(state): State<Arc<AppState>>) -> impl IntoRespon
             measurement_unit: p_row.get("measurement_unit"),
             category_id: p_row.get("category_id"),
             supplier_id: p_row.get("supplier_id"),
-            image_path: p_row.get("image_path"), // 👈 Add this mapping here!
+            image_path: p_row.get("image_path"),
             variants: attached_variants,
         });
     }
@@ -308,7 +389,6 @@ pub async fn create_product(
     State(state): State<Arc<AppState>>,
     mut multipart: Multipart,
 ) -> impl IntoResponse {
-    // Core structural variable placeholders
     let mut name = String::new();
     let mut product_type = String::from("simple");
     let mut reference: Option<String> = None;
@@ -324,11 +404,9 @@ pub async fn create_product(
     let mut supplier_id = String::new();
     let mut variations_raw: Option<String> = None;
 
-    // Binary memory block targets for processing incoming files
     let mut image_bytes: Option<Vec<u8>> = None;
     let mut image_ext = String::from("jpg");
 
-    // Loop through streaming data fields sequentially
     while let Ok(Some(field)) = multipart.next_field().await {
         let field_name = match field.name() {
             Some(n) => n.to_string(),
@@ -406,33 +484,16 @@ pub async fn create_product(
         .as_micros();
     let generated_product_id = format!("p_{}", current_timestamp);
 
-    // ─── STREAM RAW BINARY TO NATIVE SYSTEM STORAGE ───────────────────────
     let mut final_image_path: Option<String> = None;
 
     if let Some(bytes) = image_bytes {
-        // 1. Resolve platform-specific safe system data path
-        let base_dir = match std::env::var("APPDATA") {
-            Ok(path) => std::path::PathBuf::from(path).join("SuperStock"),
-            Err(_) => {
-                let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-                std::path::PathBuf::from(home)
-                    .join(".local")
-                    .join("share")
-                    .join("SuperStock")
-            }
-        };
+        let target_dir = get_storage_dir();
 
-        let target_dir = base_dir.join("product_images");
-
-        // 2. Safely create directories outside the development workspace
         if tokio::fs::create_dir_all(&target_dir).await.is_ok() {
             let file_name = format!("{}.{}", generated_product_id, image_ext);
             let absolute_filepath = target_dir.join(&file_name);
 
-            // 3. Write raw bytes securely to permanent system disk
             if tokio::fs::write(&absolute_filepath, bytes).await.is_ok() {
-                // 💡 TIP: Save ONLY the clean filename in the database.
-                // This prevents hardcoding strict system paths into your DB data rows.
                 final_image_path = Some(file_name);
             }
         }
@@ -446,7 +507,6 @@ pub async fn create_product(
         }
     };
 
-    // Step A: Write Parent Registry Row (binding our clean file path string)
     let insert_parent_result = sqlx::query(
         "INSERT INTO products (
             id, name, product_type, reference, codebar, quantity, 
@@ -476,7 +536,7 @@ pub async fn create_product(
     .bind(&measurement_unit)
     .bind(&category_id)
     .bind(&supplier_id)
-    .bind(final_image_path) // Saves as lightweight text path e.g. "appdata/product_images/p_12.jpg"
+    .bind(final_image_path)
     .execute(&mut *tx)
     .await;
 
@@ -489,7 +549,6 @@ pub async fn create_product(
             .into_response();
     }
 
-    // Step B: Loop and Process Matrix Variations (Only if 'variable')
     if product_type == "variable" {
         if let Some(raw_json_str) = variations_raw {
             if let Ok(variations_list) = serde_json::from_str::<Vec<VariantInput>>(&raw_json_str) {
@@ -541,4 +600,88 @@ pub async fn create_product(
         Json(serde_json::json!({ "id": generated_product_id, "status": "success" })),
     )
         .into_response()
+}
+
+/// DELETE /api/products/:id - Cascade drop database records and clean local image storage
+pub async fn delete_product(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    // 1. Fetch image path information using standard runtime query to ensure smooth compilation
+    let img_query: Option<String> = match sqlx::query_scalar("SELECT image_path FROM products WHERE id = ?")
+        .bind(&id)
+        .fetch_optional(&state.db)
+        .await
+    {
+        Ok(res) => res,
+        Err(e) => {
+            println!("❌ Database read error during deletion search: {}", e);
+            return StatusCode::INTERNAL_SERVER_ERROR;
+        }
+    };
+
+    // 2. Start database transaction to safely clear down nested matrix entities
+    let mut tx = match state.db.begin().await {
+        Ok(transaction) => transaction,
+        Err(e) => {
+            println!("❌ Failed to initialize database transaction: {}", e);
+            return StatusCode::INTERNAL_SERVER_ERROR;
+        }
+    };
+
+    // 3. Drop cascading variation records linked to the parent product token
+    if let Err(e) = sqlx::query("DELETE FROM product_variants WHERE product_id = ?")
+        .bind(&id)
+        .execute(&mut *tx)
+        .await
+    {
+        println!(
+            "❌ Failed to clear dependent variant structures for {}: {}",
+            id, e
+        );
+        let _ = tx.rollback().await;
+        return StatusCode::INTERNAL_SERVER_ERROR;
+    }
+
+    // 4. Drop core master product row from database index
+    if let Err(e) = sqlx::query("DELETE FROM products WHERE id = ?")
+        .bind(&id)
+        .execute(&mut *tx)
+        .await
+    {
+        println!(
+            "❌ Failed to wipe core product ledger asset for {}: {}",
+            id, e
+        );
+        let _ = tx.rollback().await;
+        return StatusCode::INTERNAL_SERVER_ERROR;
+    }
+
+    // Commit changes to database permanently
+    if let Err(e) = tx.commit().await {
+        println!("❌ Database commit operation failed: {}", e);
+        return StatusCode::INTERNAL_SERVER_ERROR;
+    }
+
+    // 5. Physical Storage Sanitation: Evict physical file from local image directory
+    if let Some(img_file_name) = img_query {
+        if !img_file_name.trim().is_empty() {
+            let mut target_file_path = get_storage_dir();
+            target_file_path.push(img_file_name);
+
+            if target_file_path.exists() && target_file_path.is_file() {
+                if let Err(e) = std::fs::remove_file(&target_file_path) {
+                    println!("⚠️ Ledger wiped, but image file failed to remove from disk: {}", e);
+                } else {
+                    println!("🗑/ Physical storage asset successfully garbage collected.");
+                }
+            }
+        }
+    }
+
+    println!(
+        "✅ Product Asset record '{}' successfully removed completely.",
+        id
+    );
+    StatusCode::NO_CONTENT
 }

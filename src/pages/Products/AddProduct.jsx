@@ -87,7 +87,7 @@ export default function AddProduct({ onNavigate }) {
             if (response.ok) {
                 const data = await response.json();
                 alert(`🎉 Product asset successfully provisioned! Key: ${data.id}`);
-                if (onNavigate) onNavigate("list");
+                navigate(-1);
             } else {
                 const errorMessage = await response.text();
                 alert(`❌ Server rejected asset registry: ${errorMessage}`);
@@ -95,7 +95,7 @@ export default function AddProduct({ onNavigate }) {
         } catch (error) {
             console.error("Network write exception intercepted:", error);
             alert("🚨 Communication error. Failed to establish connection with server inventory logs.");
-        }
+        } 
     };
 
     return (

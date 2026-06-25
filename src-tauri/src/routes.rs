@@ -28,7 +28,7 @@ pub fn create_router(shared_state: Arc<AppState>) -> Router {
         
         // Products Catalog Management (Updated to support creation payloads)
         .route("/api/products", get(products::get_products).post(products::create_product))
-        .route("/api/products/:id", put(products::edit_product))
+        .route("/api/products/:id", put(products::edit_product).delete(products::delete_product))
         .route("/api/simulate-sale", get(handlers::simulate_sale))
         
         // Staff Management

@@ -48,7 +48,6 @@ export default function EditProduct({ onNavigate }) {
                 
                 const catalog = await res.json();
                 const product = catalog.find((p) => p.id === id);
-                console.log(product);
                 if (!product) {
                     alert("🚨 Selected asset entry was missing or dropped.");
                     if (onNavigate) onNavigate("list");
@@ -150,10 +149,11 @@ export default function EditProduct({ onNavigate }) {
 
             if (response.ok) {
                 alert(`🎉 Product asset successfully modified!`);
-                if (onNavigate) onNavigate("list");
+                navigate(-1);
             } else {
                 const errorMessage = await response.text();
                 alert(`❌ Server rejected asset update checkpoint: ${errorMessage}`);
+                
             }
         } catch (error) {
             console.error("Network write exception intercepted:", error);
