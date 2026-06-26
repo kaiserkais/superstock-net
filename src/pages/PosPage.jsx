@@ -15,14 +15,16 @@ import VariantModal from "../components/pos/modals/VariantModal";
 import ClientModal from "../components/pos/modals/ClientModal";
 import TotalEditModal from "../components/pos/modals/TotalEditModal";
 import ConfirmClearModal from "../components/pos/modals/ConfirmClearModal";
-
+import useAuthStore from "../store/useAuthStore";
 // Import feedback components
 import Toast from "../components/pos/ui/Toast";
 
 export default function PosPage() {
+  const { user } = useAuthStore();
+
   const {
     cartItems, parkedCarts,
-    parkCart, openConfirmClearModal, executeSale,
+    parkCart, openConfirmClearModal, executeSale,saleLoading,loadAll
   } = usePosStore();
 
   const [toast, setToast] = useState(null);
@@ -30,11 +32,24 @@ export default function PosPage() {
   const showToast = (message, type = "success") => {
     setToast({ message, type, key: Date.now() });
   };
-
-  const handleExecuteSale = () => {
-    if (cartItems.length === 0) return;
-    executeSale();
-    showToast("Sale completed successfully!", "success");
+  useEffect(() => {
+    // This runs every time the POS page is opened/rendered
+    // It will fetch fresh products, categories, and clients from the DB
+    loadAll();
+  }, [loadAll]);
+  const handleExecuteSale = async () => {
+    if (cartItems.length === 0 || saleLoading) return;
+    const result = await executeSale(user?.id);
+    if (result.success) {
+      showToast("Sale completed successfully!", "success");
+      // loadAll();
+    } else {
+      const msg = result.reason === 'empty_cart' ? 'Cart is empty' : 
+      result.reason === 'no_user' ? 'Not authenticated please log in' : 
+      result.reason;
+      showToast(msg, "error")
+    }
+    
   };
 
   const handlePark = () => {
@@ -124,6 +139,7 @@ export default function PosPage() {
             onClear={openConfirmClearModal}
             onPrintInvoice={handlePrintInvoice}
             onPrintReceipt={handlePrintReceipt}
+            saleLoading = {saleLoading}
           />
         </div>
 

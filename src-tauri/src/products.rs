@@ -20,7 +20,7 @@ pub struct ProductVariantOut {
     pub id: String,
     pub variant_name: String,
     pub codebar: String,
-    pub quantity: i32,
+    pub quantity: f64,
     pub product_cost: f64,
     pub selling_price_1: f64,
 }
@@ -32,7 +32,7 @@ pub struct ProductOut {
     pub product_type: String,
     pub reference: Option<String>,
     pub codebar: Option<String>,
-    pub quantity: i32,
+    pub quantity: f64,
     pub product_cost: f64,
     pub selling_price_1: f64,
     pub selling_price_2: f64,
@@ -169,7 +169,7 @@ pub async fn edit_product(
     let p2: f64 = selling_price_2.parse().unwrap_or(0.0);
     let p3: f64 = selling_price_3.parse().unwrap_or(0.0);
     let p4: f64 = selling_price_4.parse().unwrap_or(0.0);
-    let base_qty: i32 = quantity.and_then(|q| q.parse().ok()).unwrap_or(0);
+    let base_qty: f64 = quantity.and_then(|q| q.parse().ok()).unwrap_or(0.0);
 
     // Process new image stream if provided
     let mut final_image_path: Option<String> = None;
@@ -214,7 +214,7 @@ pub async fn edit_product(
         )
         .bind(&name).bind(&product_type).bind(&reference)
         .bind(codebar.clone())
-        .bind(if product_type == "simple" { base_qty } else { 0 })
+        .bind(if product_type == "simple" { base_qty } else { 0.0 })
         .bind(cost).bind(p1).bind(p2).bind(p3).bind(p4)
         .bind(&measurement_unit).bind(&category_id).bind(&supplier_id)
         .bind(img_path).bind(&id)
@@ -228,7 +228,7 @@ pub async fn edit_product(
         )
         .bind(&name).bind(&product_type).bind(&reference)
         .bind(codebar.clone())
-        .bind(if product_type == "simple" { base_qty } else { 0 })
+        .bind(if product_type == "simple" { base_qty } else { 0.0 })
         .bind(cost).bind(p1).bind(p2).bind(p3).bind(p4)
         .bind(&measurement_unit).bind(&category_id).bind(&supplier_id)
         .bind(&id)
@@ -241,17 +241,20 @@ pub async fn edit_product(
         return (StatusCode::BAD_REQUEST, "Database update rejected").into_response();
     }
 
-    // Step B: Clear old variants to rewrite updated layout
-    if let Err(e) = sqlx::query("DELETE FROM product_variants WHERE product_id = ?")
+    // Step B: Fetch historical matrix rows instead of hard deleting (Fixes Constraint Errors)
+    let existing_vars = match sqlx::query("SELECT id, codebar FROM product_variants WHERE product_id = ?")
         .bind(&id)
-        .execute(&mut *tx)
+        .fetch_all(&mut *tx)
         .await
     {
-        println!("❌ Failed to prune historical combination rows: {}", e);
-        return (StatusCode::INTERNAL_SERVER_ERROR, "Variant sync failure").into_response();
-    }
+        Ok(rows) => rows,
+        Err(e) => {
+            println!("❌ Failed to retrieve variant structural metadata: {}", e);
+            return (StatusCode::INTERNAL_SERVER_ERROR, "Variant sync failure").into_response();
+        }
+    };
 
-    // Step C: Write Fresh Matrix Variations (Only if 'variable')
+    // Step C: Execute smart delta upserts (Only if product is 'variable')
     if product_type == "variable" {
         if let Some(raw_json_str) = variations_raw {
             if let Ok(variations_list) = serde_json::from_str::<Vec<VariantInput>>(&raw_json_str) {
@@ -259,28 +262,95 @@ pub async fn edit_product(
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap()
                     .as_micros();
+
+                let mut processed_codebars = Vec::new();
+
                 for (idx, var) in variations_list.iter().enumerate() {
-                    let generated_variant_id = format!("v_{}_{}", current_timestamp, idx);
+                    processed_codebars.push(var.codebar.clone());
+
                     let v_cost: f64 = var.product_cost.parse().unwrap_or(cost);
                     let v_p1: f64 = var.selling_price_1.parse().unwrap_or(p1);
-                    let v_qty: i32 = var.quantity.parse().unwrap_or(0);
+                    let v_qty: f64 = var.quantity.parse().unwrap_or(0.0);
 
-                    let insert_var_result = sqlx::query(
-                        "INSERT INTO product_variants (id, product_id, variant_name, codebar, quantity, product_cost, selling_price_1) VALUES (?, ?, ?, ?, ?, ?, ?)"
-                    )
-                    .bind(generated_variant_id).bind(&id).bind(&var.variant_name).bind(&var.codebar).bind(v_qty).bind(v_cost).bind(v_p1)
-                    .execute(&mut *tx)
-                    .await;
+                    // Check if this particular variant is already saved using its barcode
+                    let existing_match = existing_vars.iter()
+                        .find(|row| row.get::<String, _>("codebar") == var.codebar);
 
-                    if let Err(e) = insert_var_result {
+                    let sync_result = if let Some(row) = existing_match {
+                        let existing_id: String = row.get("id");
+                        // 🔄 Safe update preserving historical primary keys
+                        sqlx::query(
+                            "UPDATE product_variants SET variant_name = ?, quantity = ?, product_cost = ?, selling_price_1 = ? WHERE id = ?"
+                        )
+                        .bind(&var.variant_name).bind(v_qty).bind(v_cost).bind(v_p1).bind(existing_id)
+                        .execute(&mut *tx)
+                        .await
+                    } else {
+                        // ➕ Structural expansion: safe insertion of brand new combination models
+                        let generated_variant_id = format!("v_{}_{}", current_timestamp, idx);
+                        sqlx::query(
+                            "INSERT INTO product_variants (id, product_id, variant_name, codebar, quantity, product_cost, selling_price_1) VALUES (?, ?, ?, ?, ?, ?, ?)"
+                        )
+                        .bind(generated_variant_id).bind(&id).bind(&var.variant_name).bind(&var.codebar).bind(v_qty).bind(v_cost).bind(v_p1)
+                        .execute(&mut *tx)
+                        .await
+                    };
+
+                    if let Err(e) = sync_result {
                         println!("❌ Combinatorial matrix write interrupted: {}", e);
                         return (
                             StatusCode::BAD_REQUEST,
                             "Combination model contains an identical codebar constraint",
-                        )
-                            .into_response();
+                        ).into_response();
                     }
                 }
+
+                // 🗑️ Safely evaluate old configurations dropped by the frontend editor
+                for row in &existing_vars {
+                    let old_id: String = row.get("id");
+                    let old_codebar: String = row.get("codebar");
+
+                    if !processed_codebars.contains(&old_codebar) {
+                        // Verify ledger usage before execution to bypass constraint blocks
+                        let entry_sold = match sqlx::query("SELECT 1 FROM sale_items WHERE variant_id = ? LIMIT 1")
+                            .bind(&old_id)
+                            .fetch_optional(&mut *tx)
+                            .await
+                        {
+                            Ok(opt) => opt.is_some(),
+                            Err(_) => true, // Fallback block state
+                        };
+
+                        if !entry_sold {
+                            let _ = sqlx::query("DELETE FROM product_variants WHERE id = ?")
+                                .bind(&old_id)
+                                .execute(&mut *tx)
+                                .await;
+                        } else {
+                            println!("⚠️ Variation '{}' matches historical sales receipts. Retained safely.", old_codebar);
+                        }
+                    }
+                }
+            }
+        }
+    } else {
+        // If the product switched from variable to simple, safe clean untouched items 
+        for row in &existing_vars {
+            let old_id: String = row.get("id");
+            let entry_sold = match sqlx::query("SELECT 1 FROM sale_items WHERE variant_id = ? LIMIT 1")
+                .bind(&old_id)
+                .fetch_optional(&mut *tx)
+                .await
+            {
+                Ok(opt) => opt.is_some(),
+                Err(_) => true,
+            };
+
+            if !entry_sold {
+                let _ = sqlx::query("DELETE FROM product_variants WHERE id = ?")
+                    .bind(&old_id)
+                    .execute(&mut *tx)
+                    .await;
             }
         }
     }
@@ -290,15 +360,13 @@ pub async fn edit_product(
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             "Storage write checkpoint dropped",
-        )
-            .into_response();
+        ).into_response();
     }
 
     (
         StatusCode::OK,
         Json(serde_json::json!({ "id": id, "status": "updated" })),
-    )
-        .into_response()
+    ).into_response()
 }
 
 /// GET /api/products - Lists all catalog products alongside nested child combinations
@@ -473,9 +541,9 @@ pub async fn create_product(
     let p3: f64 = selling_price_3.parse().unwrap_or(0.0);
     let p4: f64 = selling_price_4.parse().unwrap_or(0.0);
 
-    let base_qty: i32 = match &quantity {
-        Some(qty_str) => qty_str.parse().unwrap_or(0),
-        None => 0,
+    let base_qty: f64 = match &quantity {
+        Some(qty_str) => qty_str.parse().unwrap_or(0.0),
+        None => 0.0,
     };
 
     let current_timestamp = std::time::SystemTime::now()
@@ -518,15 +586,13 @@ pub async fn create_product(
     .bind(&name)
     .bind(&product_type)
     .bind(&reference)
-    .bind(if product_type == "simple" {
+    .bind(
         codebar.clone()
-    } else {
-        None
-    })
+   )
     .bind(if product_type == "simple" {
         base_qty
     } else {
-        0
+        0.0
     })
     .bind(cost)
     .bind(p1)
@@ -556,7 +622,7 @@ pub async fn create_product(
                     let generated_variant_id = format!("v_{}_{}", current_timestamp, idx);
                     let v_cost: f64 = var.product_cost.parse().unwrap_or(cost);
                     let v_p1: f64 = var.selling_price_1.parse().unwrap_or(p1);
-                    let v_qty: i32 = var.quantity.parse().unwrap_or(0);
+                    let v_qty: f64 = var.quantity.parse().unwrap_or(0.0);
 
                     let insert_var_result = sqlx::query(
                         "INSERT INTO product_variants (

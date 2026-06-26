@@ -1,224 +1,124 @@
 /**
  * usePosStore.js — Zustand state management for the POS terminal
- * Handles: cart items, parked carts, client assignment,
- *          weighted/variant modals, keyboard shortcuts, search/filter
+ * Now strictly handles state. Network calls are delegated to posRepository.
  */
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
+import { posRepository } from "../services/posRepository"; // <-- Update this path as needed
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 const uuid = () => Math.random().toString(36).slice(2, 10);
-
-const calcCartTotals = (items) => {
-  const subtotal = items.reduce((sum, item) => sum + item.lineTotal, 0);
-  return { subtotal, total: subtotal };
-};
-
-// ─── Mock product catalog (mirrors your SQLite schema) ────────────────────────
-// Replace these with real Tauri invoke calls later
-export const MOCK_PRODUCTS = [
-  {
-    id: "p_simple_1",
-    name: "Air Jordan 1 Low",
-    product_type: "simple",
-    reference: "SKU-AJ1-LOW",
-    codebar: "6131234567890",
-    quantity: 12,
-    product_cost: 11000,
-    selling_price_1: 15000,
-    selling_price_2: 14000,
-    selling_price_3: 13500,
-    selling_price_4: 13000,
-    measurement_unit: "pcs",
-    category_id: "cat_1",
-    category_name: "Footwear / Shoes",
-    supplier_id: "s1",
-    image_path: null,
-  },
-  {
-    id: "p_var_1",
-    name: "Premium Suede Loafers",
-    product_type: "variable",
-    reference: "SKU-LOAF-SR",
-    codebar: null,
-    quantity: 0, // derived from variants
-    product_cost: 8500,
-    selling_price_1: 12000,
-    selling_price_2: 11000,
-    selling_price_3: 10500,
-    selling_price_4: 10000,
-    measurement_unit: "pcs",
-    category_id: "cat_1",
-    category_name: "Footwear / Shoes",
-    supplier_id: "s1",
-    image_path: null,
-    variants: [
-      { id: "v_1", variant_name: "Suede Loafers (41 - Black)", codebar: "613998877001", quantity: 5, product_cost: 8500, selling_price_1: 12000 },
-      { id: "v_2", variant_name: "Suede Loafers (42 - Black)", codebar: "613998877002", quantity: 8, product_cost: 8500, selling_price_1: 12000 },
-      { id: "v_3", variant_name: "Suede Loafers (43 - Brown)", codebar: "613998877003", quantity: 3, product_cost: 8500, selling_price_1: 12000 },
-    ],
-  },
-  {
-    id: "p_simple_2",
-    name: "Caftan Traditionnel Doré",
-    product_type: "simple",
-    reference: "SKU-CAFT-001",
-    codebar: "6139988770099",
-    quantity: 6,
-    product_cost: 18000,
-    selling_price_1: 28000,
-    selling_price_2: 26000,
-    selling_price_3: 25000,
-    selling_price_4: 24000,
-    measurement_unit: "pcs",
-    category_id: "cat_2",
-    category_name: "Traditional Clothing",
-    supplier_id: "s1",
-    image_path: null,
-  },
-  {
-    id: "p_simple_3",
-    name: "Tissu Broderie Algéroise",
-    product_type: "simple",
-    reference: "SKU-TIS-ALG",
-    codebar: "6139988770100",
-    quantity: 50,
-    product_cost: 1200,
-    selling_price_1: 2000,
-    selling_price_2: 1800,
-    selling_price_3: 1700,
-    selling_price_4: 1600,
-    measurement_unit: "kg",
-    category_id: "cat_2",
-    category_name: "Traditional Clothing",
-    supplier_id: "s1",
-    image_path: null,
-  },
-  {
-    id: "p_simple_4",
-    name: "Sneakers Urban Runner",
-    product_type: "simple",
-    reference: "SKU-URB-RUN",
-    codebar: "6131234567891",
-    quantity: 20,
-    product_cost: 7000,
-    selling_price_1: 10000,
-    selling_price_2: 9500,
-    selling_price_3: 9000,
-    selling_price_4: 8500,
-    measurement_unit: "pcs",
-    category_id: "cat_1",
-    category_name: "Footwear / Shoes",
-    supplier_id: "s1",
-    image_path: null,
-  },
-  {
-    id: "p_var_2",
-    name: "Djellaba Homme Premium",
-    product_type: "variable",
-    reference: "SKU-DJEL-H",
-    codebar: null,
-    quantity: 0,
-    product_cost: 5000,
-    selling_price_1: 8500,
-    selling_price_2: 8000,
-    selling_price_3: 7500,
-    selling_price_4: 7000,
-    measurement_unit: "pcs",
-    category_id: "cat_2",
-    category_name: "Traditional Clothing",
-    supplier_id: "s1",
-    image_path: null,
-    variants: [
-      { id: "v_d1", variant_name: "Djellaba Homme (S - Blanc)", codebar: "613000100001", quantity: 4, product_cost: 5000, selling_price_1: 8500 },
-      { id: "v_d2", variant_name: "Djellaba Homme (M - Blanc)", codebar: "613000100002", quantity: 7, product_cost: 5000, selling_price_1: 8500 },
-      { id: "v_d3", variant_name: "Djellaba Homme (L - Beige)", codebar: "613000100003", quantity: 2, product_cost: 5000, selling_price_1: 8500 },
-    ],
-  },
-  {
-    id: "p_simple_5",
-    name: "Sandales Cuir Kabyle",
-    product_type: "simple",
-    reference: "SKU-SAND-KAB",
-    codebar: "6131234500001",
-    quantity: 15,
-    product_cost: 3500,
-    selling_price_1: 5500,
-    selling_price_2: 5000,
-    selling_price_3: 4800,
-    selling_price_4: 4500,
-    measurement_unit: "pcs",
-    category_id: "cat_1",
-    category_name: "Footwear / Shoes",
-    supplier_id: "s1",
-    image_path: null,
-  },
-  {
-    id: "p_simple_6",
-    name: "Encens Bakhour El Hanou",
-    product_type: "simple",
-    reference: "SKU-BAK-001",
-    codebar: "6139900000001",
-    quantity: 100,
-    product_cost: 300,
-    selling_price_1: 500,
-    selling_price_2: 450,
-    selling_price_3: 420,
-    selling_price_4: 400,
-    measurement_unit: "g",
-    category_id: "cat_2",
-    category_name: "Traditional Clothing",
-    supplier_id: "s1",
-    image_path: null,
-  },
-];
-
-export const MOCK_CATEGORIES = [
-  { id: "cat_1", name: "Footwear / Shoes" },
-  { id: "cat_2", name: "Traditional Clothing" },
-];
-
-export const MOCK_CLIENTS = [
-  { id: "c1", name: "Amine Belkacem",   phone_number: "0666123456", address: "Constantine", total_debt: 2500 },
-  { id: "c2", name: "Fatima Zerrouki",  phone_number: "0777234567", address: "Alger",       total_debt: 0    },
-  { id: "c3", name: "Yacine Hamidi",    phone_number: "0555345678", address: "Oran",        total_debt: 0    },
-];
 
 // ─── Store ────────────────────────────────────────────────────────────────────
 const usePosStore = create(
   immer((set, get) => ({
+
+    // ── Remote data ───────────────────────────────────────────────────────────
+    products:   [],      // ProductOut[]
+    categories: [],      // CategoryOut[]
+    clients:    [],      // CustomerOut[]
+
+    // Loading / error states per resource
+    productsLoading:   false,
+    categoriesLoading: false,
+    clientsLoading:    false,
+    productsError:     null,
+    categoriesError:   null,
+    clientsError:      null,
+
+    // Sale submission state
+    saleLoading: false,
+    saleError:   null,
+
     // ── Cart ──────────────────────────────────────────────────────────────────
-    cartItems: [],         // [{ cartId, productId, variantId?, name, qty, unit, unitPrice, cost, lineTotal, isWeighted }]
-    cartClient: null,      // assigned client object
-    // Adjustment: { type: 'discount' | 'surcharge', value: number (DA) }
-    // discount → subtracted from subtotal and shown as a separate line
-    // surcharge → added on top (e.g. delivery, fee)
+    cartItems:      [],    // [{ cartId, productId, variantId?, name, qty, unit, unitPrice, cost, lineTotal, isWeighted }]
+    cartClient:     null,  // assigned customer object
     cartAdjustment: { type: "discount", value: 0 },
 
     // ── Parked carts ──────────────────────────────────────────────────────────
-    parkedCarts: [],       // [{ id, items, client, total, parkedAt, label }]
+    parkedCarts: [],
 
     // ── Modals ────────────────────────────────────────────────────────────────
-    weightModal: null,     // { product, mode: 'add' | 'edit', cartId? }
-    variantModal: null,    // { product }
-    clientModal: false,
-    totalEditModal: false,
-    confirmClearModal: false,
+    weightModal:        null,   // { product, mode: 'add'|'edit', cartId? }
+    variantModal:       null,   // { product }
+    clientModal:        false,
+    totalEditModal:     false,
+    confirmClearModal:  false,
 
-    // ── Product grid ─────────────────────────────────────────────────────────
-    search: "",
+    // ── Product grid ──────────────────────────────────────────────────────────
+    search:         "",
     categoryFilter: "all",
-    gridPage: 1,           // for infinite scroll simulation
-    PAGE_SIZE: 30,
+    gridPage:       1,
+    PAGE_SIZE:      30,
 
-    // ── Barcode / search input ────────────────────────────────────────────────
+    // ── Barcode buffer ────────────────────────────────────────────────────────
     barcodeBuffer: "",
 
     // ─────────────────────────────────────────────────────────────────────────
-    // CART ACTIONS
+    // REMOTE DATA LOADERS
     // ─────────────────────────────────────────────────────────────────────────
 
-    /** Add a simple pcs product directly */
+    /** Load product catalog from the backend */
+    loadProducts: async () => {
+      set((s) => { s.productsLoading = true; s.productsError = null; });
+      try {
+        const data = await posRepository.getProducts();
+        set((s) => {
+          s.products = data;
+          s.productsLoading = false;
+        });
+      } catch (err) {
+        set((s) => {
+          s.productsError = err?.response?.data ?? "Failed to load products";
+          s.productsLoading = false;
+        });
+      }
+    },
+
+    /** Load category list from the backend */
+    loadCategories: async () => {
+      set((s) => { s.categoriesLoading = true; s.categoriesError = null; });
+      try {
+        const data = await posRepository.getCategories();
+        set((s) => {
+          s.categories = data;
+          s.categoriesLoading = false;
+        });
+      } catch (err) {
+        set((s) => {
+          s.categoriesError = err?.response?.data ?? "Failed to load categories";
+          s.categoriesLoading = false;
+        });
+      }
+    },
+
+    /** Load customer list from the backend */
+    loadClients: async () => {
+      set((s) => { s.clientsLoading = true; s.clientsError = null; });
+      try {
+        const data = await posRepository.getClients();
+        set((s) => {
+          s.clients = data;
+          s.clientsLoading = false;
+        });
+      } catch (err) {
+        set((s) => {
+          s.clientsError = err?.response?.data ?? "Failed to load customers";
+          s.clientsLoading = false;
+        });
+      }
+    },
+
+    /** Bootstrap: load all remote data in parallel */
+    loadAll: async () => {
+      const { loadProducts, loadCategories, loadClients } = get();
+      await Promise.all([loadProducts(), loadCategories(), loadClients()]);
+    },
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // CART ACTIONS (Unchanged)
+    // ─────────────────────────────────────────────────────────────────────────
+
     addSimpleProduct: (product, qty = 1, unitPrice = null) => {
       set((state) => {
         const price = unitPrice ?? product.selling_price_1;
@@ -226,129 +126,114 @@ const usePosStore = create(
           (i) => i.productId === product.id && !i.variantId && !i.isWeighted
         );
         if (existing) {
-          existing.qty += qty;
+          existing.qty      += qty;
           existing.lineTotal = existing.qty * existing.unitPrice;
         } else {
           state.cartItems.push({
-            cartId: uuid(),
+            cartId:    uuid(),
             productId: product.id,
             variantId: null,
-            name: product.name,
+            name:      product.name,
             qty,
-            unit: product.measurement_unit,
+            unit:      product.measurement_unit,
             unitPrice: price,
-            cost: product.product_cost,
+            cost:      product.product_cost,
             lineTotal: qty * price,
             isWeighted: false,
           });
         }
-        _recalcTotal(state);
       });
     },
 
-    /** Add a weighted/measured product (kg/g/etc) or by price */
     addWeightedProduct: (product, { qty = null, byPrice = null }, unitPrice = null) => {
       set((state) => {
         const price = unitPrice ?? product.selling_price_1;
         let lineTotal, displayQty;
         if (byPrice !== null) {
-          // client asks for X DA worth → qty = byPrice / price
-          lineTotal = byPrice;
+          lineTotal  = byPrice;
           displayQty = byPrice / price;
         } else {
           displayQty = qty;
-          lineTotal = qty * price;
+          lineTotal  = qty * price;
         }
         state.cartItems.push({
-          cartId: uuid(),
-          productId: product.id,
-          variantId: null,
-          name: product.name,
-          qty: parseFloat(displayQty.toFixed(3)),
-          unit: product.measurement_unit,
-          unitPrice: price,
-          cost: product.product_cost,
+          cartId:     uuid(),
+          productId:  product.id,
+          variantId:  null,
+          name:       product.name,
+          qty:        parseFloat(displayQty.toFixed(3)),
+          unit:       product.measurement_unit,
+          unitPrice:  price,
+          cost:       product.product_cost,
           lineTotal,
           isWeighted: true,
-          byPrice: byPrice !== null,
+          byPrice:    byPrice !== null,
         });
-        _recalcTotal(state);
       });
     },
 
-    /** Add a product variant to the cart */
     addVariantProduct: (product, variant, qty = 1, unitPrice = null) => {
       set((state) => {
-        const price = unitPrice ?? variant.selling_price_1;
-        const existing = state.cartItems.find(
-          (i) => i.variantId === variant.id
-        );
+        const price    = unitPrice ?? variant.selling_price_1;
+        const existing = state.cartItems.find((i) => i.variantId === variant.id);
         if (existing) {
-          existing.qty += qty;
+          existing.qty      += qty;
           existing.lineTotal = existing.qty * existing.unitPrice;
         } else {
           state.cartItems.push({
-            cartId: uuid(),
-            productId: product.id,
-            variantId: variant.id,
-            name: variant.variant_name,
+            cartId:     uuid(),
+            productId:  product.id,
+            variantId:  variant.id,
+            name:       variant.variant_name,
             qty,
-            unit: "pcs",
-            unitPrice: price,
-            cost: variant.product_cost,
-            lineTotal: qty * price,
+            unit:       "pcs",
+            unitPrice:  price,
+            cost:       variant.product_cost,
+            lineTotal:  qty * price,
             isWeighted: false,
           });
         }
-        _recalcTotal(state);
       });
     },
 
-    /** Update quantity of a pcs cart item */
     updateQty: (cartId, delta) => {
       set((state) => {
-        const item = state.cartItems.find((i) => i.cartId === cartId);
+        const item   = state.cartItems.find((i) => i.cartId === cartId);
         if (!item) return;
         const newQty = item.qty + delta;
         if (newQty <= 0) {
           state.cartItems = state.cartItems.filter((i) => i.cartId !== cartId);
         } else {
-          item.qty = newQty;
+          item.qty       = newQty;
           item.lineTotal = newQty * item.unitPrice;
         }
-        _recalcTotal(state);
       });
     },
 
-    /** Remove a cart item */
     removeCartItem: (cartId) => {
       set((state) => {
         state.cartItems = state.cartItems.filter((i) => i.cartId !== cartId);
-        _recalcTotal(state);
       });
     },
 
-    /** Edit weighted item: replace with new measurement */
     editWeightedItem: (cartId, { qty, byPrice }, unitPrice) => {
       set((state) => {
-        const item = state.cartItems.find((i) => i.cartId === cartId);
+        const item  = state.cartItems.find((i) => i.cartId === cartId);
         if (!item) return;
         const price = unitPrice ?? item.unitPrice;
         if (byPrice !== null && byPrice !== undefined) {
-          item.qty = parseFloat((byPrice / price).toFixed(3));
+          item.qty       = parseFloat((byPrice / price).toFixed(3));
           item.lineTotal = byPrice;
-          item.byPrice = true;
+          item.byPrice   = true;
         } else {
-          item.qty = parseFloat(qty.toFixed(3));
+          item.qty       = parseFloat(qty.toFixed(3));
           item.lineTotal = qty * price;
-          item.byPrice = false;
+          item.byPrice   = false;
         }
         item.unitPrice = price;
-        _recalcTotal(state);
       });
     },
 
-    /** Set a discount or surcharge on the cart total */
     setCartAdjustment: (type, value) => {
       set((state) => {
         state.cartAdjustment = { type, value: Math.max(0, value) };
@@ -361,7 +246,6 @@ const usePosStore = create(
       });
     },
 
-    /** Assign client to current cart */
     assignClient: (client) => {
       set((state) => { state.cartClient = client; });
     },
@@ -370,56 +254,47 @@ const usePosStore = create(
       set((state) => { state.cartClient = null; });
     },
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // PARKED CARTS
-    // ─────────────────────────────────────────────────────────────────────────
-
-    /** Park the current cart (if has items) and start fresh */
     parkCart: () => {
       set((state) => {
         if (state.cartItems.length === 0) return;
         state.parkedCarts.push({
-          id: uuid(),
-          items: JSON.parse(JSON.stringify(state.cartItems)),
-          client: state.cartClient,
+          id:         uuid(),
+          items:      JSON.parse(JSON.stringify(state.cartItems)),
+          client:     state.cartClient,
           adjustment: { ...state.cartAdjustment },
-          parkedAt: new Date().toISOString(),
-          label: state.cartClient
+          parkedAt:   new Date().toISOString(),
+          label:      state.cartClient
             ? state.cartClient.name
             : `Cart ${state.parkedCarts.length + 1}`,
         });
-        state.cartItems = [];
-        state.cartClient = null;
+        state.cartItems      = [];
+        state.cartClient     = null;
         state.cartAdjustment = { type: "discount", value: 0 };
       });
     },
 
-    /** Restore a parked cart — current active cart gets parked if non-empty */
     restoreParkedCart: (parkedId) => {
       set((state) => {
         const idx = state.parkedCarts.findIndex((c) => c.id === parkedId);
         if (idx === -1) return;
 
-        // Park current if non-empty
         if (state.cartItems.length > 0) {
           state.parkedCarts.push({
-            id: uuid(),
-            items: JSON.parse(JSON.stringify(state.cartItems)),
-            client: state.cartClient,
+            id:         uuid(),
+            items:      JSON.parse(JSON.stringify(state.cartItems)),
+            client:     state.cartClient,
             adjustment: { ...state.cartAdjustment },
-            parkedAt: new Date().toISOString(),
-            label: state.cartClient
+            parkedAt:   new Date().toISOString(),
+            label:      state.cartClient
               ? state.cartClient.name
               : `Cart ${state.parkedCarts.length + 1}`,
           });
         }
 
-        const restored = state.parkedCarts[idx];
-        state.cartItems = restored.items;
-        state.cartClient = restored.client;
-        state.cartAdjustment = restored.adjustment ?? { type: "discount", value: 0 };
-
-        // Remove from parked
+        const restored          = state.parkedCarts[idx];
+        state.cartItems         = restored.items;
+        state.cartClient        = restored.client;
+        state.cartAdjustment    = restored.adjustment ?? { type: "discount", value: 0 };
         state.parkedCarts.splice(idx, 1);
       });
     },
@@ -431,91 +306,99 @@ const usePosStore = create(
     },
 
     // ─────────────────────────────────────────────────────────────────────────
-    // SALE / CLEAR
+    // EXECUTE SALE
     // ─────────────────────────────────────────────────────────────────────────
 
-    executeSale: () => {
-      set((state) => {
-        // TODO: call Tauri invoke to persist the sale to SQLite
-        // For now just clear
-        state.cartItems = [];
-        state.cartClient = null;
-        state.cartAdjustment = { type: "discount", value: 0 };
-      });
+    executeSale: async (userId) => {
+      const { cartItems, cartClient, cartAdjustment, getCartTotals } = get();
+
+      if (cartItems.length === 0) return { success: false, reason: "empty_cart" };
+      if (!userId)                return { success: false, reason: "no_user" };
+
+      const { subtotal, adjustmentType, adjustmentValue, total } = getCartTotals();
+
+      const items = cartItems.map((item) => ({
+        product_id:   item.productId,
+        variant_id:   item.variantId ?? null,
+        product_name: item.name,
+        unit:         item.unit,
+        qty:          item.qty,
+        unit_cost:    item.cost,
+        unit_price:   item.unitPrice,
+        line_total:   item.lineTotal,
+        is_weighted:  item.isWeighted,
+      }));
+
+      const payload = {
+        user_id:     userId,
+        session_id:  1,
+        customer_id: cartClient?.id ?? null,
+        subtotal,
+        adj_type:    adjustmentValue > 0 ? adjustmentType : "none",
+        adj_value:   adjustmentValue,
+        total,
+        items,
+      };
+
+      set((s) => { s.saleLoading = true; s.saleError = null; });
+      try {
+        // Delegate to repository
+        const data = await posRepository.createSale(payload);
+
+        set((s) => {
+          s.cartItems      = [];
+          s.cartClient     = null;
+          s.cartAdjustment = { type: "discount", value: 0 };
+          s.saleLoading    = false;
+        });
+        
+        return { success: true, saleId: data.id };
+      } catch (err) {
+        const message = err?.response?.data ?? "Sale submission failed";
+        set((s) => { s.saleError = message; s.saleLoading = false; });
+        return { success: false, reason: message };
+      }
     },
 
     clearCart: () => {
       set((state) => {
-        state.cartItems = [];
-        state.cartClient = null;
+        state.cartItems      = [];
+        state.cartClient     = null;
         state.cartAdjustment = { type: "discount", value: 0 };
       });
     },
 
     // ─────────────────────────────────────────────────────────────────────────
-    // MODAL CONTROLS
+    // MODAL & FILTER CONTROLS (Unchanged)
     // ─────────────────────────────────────────────────────────────────────────
 
-    openWeightModal: (product) =>
-      set((state) => { state.weightModal = { product, mode: "add" }; }),
-
-    openWeightEditModal: (cartId, product) =>
-      set((state) => { state.weightModal = { product, mode: "edit", cartId }; }),
-
-    closeWeightModal: () =>
-      set((state) => { state.weightModal = null; }),
-
-    openVariantModal: (product) =>
-      set((state) => { state.variantModal = { product }; }),
-
-    closeVariantModal: () =>
-      set((state) => { state.variantModal = null; }),
-
-    openClientModal: () =>
-      set((state) => { state.clientModal = true; }),
-
-    closeClientModal: () =>
-      set((state) => { state.clientModal = false; }),
-
-    openTotalEditModal: () =>
-      set((state) => { state.totalEditModal = true; }),
-
-    closeTotalEditModal: () =>
-      set((state) => { state.totalEditModal = false; }),
-
-    openConfirmClearModal: () =>
-      set((state) => { state.confirmClearModal = true; }),
-
-    closeConfirmClearModal: () =>
-      set((state) => { state.confirmClearModal = false; }),
+    openWeightModal:      (product)        => set((s) => { s.weightModal = { product, mode: "add" }; }),
+    openWeightEditModal:  (cartId, product) => set((s) => { s.weightModal = { product, mode: "edit", cartId }; }),
+    closeWeightModal:     ()               => set((s) => { s.weightModal = null; }),
+    openVariantModal:     (product)        => set((s) => { s.variantModal = { product }; }),
+    closeVariantModal:    ()               => set((s) => { s.variantModal = null; }),
+    openClientModal:      ()               => set((s) => { s.clientModal = true; }),
+    closeClientModal:     ()               => set((s) => { s.clientModal = false; }),
+    openTotalEditModal:   ()               => set((s) => { s.totalEditModal = true; }),
+    closeTotalEditModal:  ()               => set((s) => { s.totalEditModal = false; }),
+    openConfirmClearModal:  ()             => set((s) => { s.confirmClearModal = true; }),
+    closeConfirmClearModal: ()             => set((s) => { s.confirmClearModal = false; }),
+    setSearch:         (v) => set((s) => { s.search = v; s.gridPage = 1; }),
+    setCategoryFilter: (v) => set((s) => { s.categoryFilter = v; s.gridPage = 1; }),
+    loadMoreProducts:  ()  => set((s) => { s.gridPage += 1; }),
+    setBarcodeBuffer: (v) => set((s) => { s.barcodeBuffer = v; }),
 
     // ─────────────────────────────────────────────────────────────────────────
-    // PRODUCT GRID FILTERS
+    // BARCODE SCANNER (Unchanged)
     // ─────────────────────────────────────────────────────────────────────────
 
-    setSearch: (v) =>
-      set((state) => { state.search = v; state.gridPage = 1; }),
-
-    setCategoryFilter: (v) =>
-      set((state) => { state.categoryFilter = v; state.gridPage = 1; }),
-
-    loadMoreProducts: () =>
-      set((state) => { state.gridPage += 1; }),
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // BARCODE SCANNER BUFFER
-    // ─────────────────────────────────────────────────────────────────────────
-    setBarcodeBuffer: (v) =>
-      set((state) => { state.barcodeBuffer = v; }),
-
-    /** Process a scanned/typed barcode or search string */
     processBarcode: (raw) => {
-      const code = raw.trim();
-      if (!code) return;
+      const code     = raw.trim();
+      if (!code) return null;
+      const products = get().products;
 
-      // 1. Try exact variant codebar match
-      for (const p of MOCK_PRODUCTS) {
-        if (p.variants) {
+      for (const p of products) {
+        if (p.variants?.length) {
           const v = p.variants.find((vr) => vr.codebar === code);
           if (v) {
             get().addVariantProduct(p, v);
@@ -524,8 +407,7 @@ const usePosStore = create(
         }
       }
 
-      // 2. Try exact product codebar match
-      const byCodebar = MOCK_PRODUCTS.find((p) => p.codebar === code);
+      const byCodebar = products.find((p) => p.codebar === code);
       if (byCodebar) {
         if (byCodebar.product_type === "variable") {
           get().openVariantModal(byCodebar);
@@ -539,8 +421,7 @@ const usePosStore = create(
         return { type: "simple_added", product: byCodebar };
       }
 
-      // 3. Try reference match
-      const byRef = MOCK_PRODUCTS.find(
+      const byRef = products.find(
         (p) => p.reference?.toLowerCase() === code.toLowerCase()
       );
       if (byRef) {
@@ -560,12 +441,12 @@ const usePosStore = create(
     },
 
     // ─────────────────────────────────────────────────────────────────────────
-    // DERIVED GETTERS
+    // DERIVED GETTERS (Unchanged)
     // ─────────────────────────────────────────────────────────────────────────
 
     getFilteredProducts: () => {
-      const { search, categoryFilter, gridPage, PAGE_SIZE } = get();
-      let list = MOCK_PRODUCTS;
+      const { products, search, categoryFilter, gridPage, PAGE_SIZE } = get();
+      let list = products;
       if (categoryFilter !== "all") {
         list = list.filter((p) => p.category_id === categoryFilter);
       }
@@ -575,58 +456,39 @@ const usePosStore = create(
           (p) =>
             p.name.toLowerCase().includes(q) ||
             p.reference?.toLowerCase().includes(q) ||
-            p.codebar?.includes(q)
+            p.codebar?.includes(q) ||
+            p.variants?.some(
+              (v) =>
+                v.variant_name.toLowerCase().includes(q) ||
+                v.codebar.includes(q)
+            )
         );
       }
-      const total = list.length;
+      const total   = list.length;
       const visible = list.slice(0, gridPage * PAGE_SIZE);
       return { products: visible, hasMore: visible.length < total, total };
     },
 
-    getCartSubtotal: () => {
-      return get().cartItems.reduce((s, i) => s + i.lineTotal, 0);
-    },
-
-    /** Returns { subtotal, adjustmentAmount, total }
-     *  adjustmentAmount is positive = discount (subtracted), negative = surcharge (added)
-     *  Use this in CartPanel to render all three lines. */
     getCartTotals: () => {
       const { cartItems, cartAdjustment } = get();
       const subtotal = cartItems.reduce((s, i) => s + i.lineTotal, 0);
-      const adj = cartAdjustment.value || 0;
-      const total =
+      const adj      = cartAdjustment.value || 0;
+      const total    =
         cartAdjustment.type === "discount"
           ? Math.max(0, subtotal - adj)
           : subtotal + adj;
-      return {
-        subtotal,
-        adjustmentType: cartAdjustment.type,   // 'discount' | 'surcharge'
-        adjustmentValue: adj,                   // raw DA value
-        hasAdjustment: adj > 0,
-        total,
-      };
+      return { subtotal, adjustmentType: cartAdjustment.type, adjustmentValue: adj, hasAdjustment: adj > 0, total };
     },
 
-    // Kept for backward compat (barcode flash etc.)
     getCartTotal: () => {
       const { cartItems, cartAdjustment } = get();
       const subtotal = cartItems.reduce((s, i) => s + i.lineTotal, 0);
-      const adj = cartAdjustment.value || 0;
-      return cartAdjustment.type === "discount"
-        ? Math.max(0, subtotal - adj)
-        : subtotal + adj;
+      const adj      = cartAdjustment.value || 0;
+      return cartAdjustment.type === "discount" ? Math.max(0, subtotal - adj) : subtotal + adj;
     },
 
-    getCartItemCount: () => {
-      return get().cartItems.reduce((s, i) => s + i.qty, 0);
-    },
+    getCartItemCount: () => get().cartItems.reduce((s, i) => s + i.qty, 0),
   }))
 );
-
-// ── Internal helper: recalculate subtotal from items (mutates immer draft) ────
-// Note: adjustment is applied at read-time via getCartTotals(), not stored here
-function _recalcTotal(_state) {
-  // no-op — subtotal is derived live from cartItems in getCartTotals()
-}
 
 export default usePosStore;

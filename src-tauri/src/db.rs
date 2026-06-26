@@ -130,7 +130,7 @@ async fn create_schemas(pool: &SqlitePool) -> Result<(), sqlx::Error> {
             product_type     TEXT NOT NULL CHECK(product_type IN ('simple', 'variable')),
             reference        TEXT,
             codebar          TEXT UNIQUE,
-            quantity         INTEGER NOT NULL DEFAULT 0,
+            quantity         REAL NOT NULL DEFAULT 0.0,
             product_cost     REAL    NOT NULL DEFAULT 0.0,
             selling_price_1  REAL    NOT NULL DEFAULT 0.0,  -- Retail   (P1)
             selling_price_2  REAL    NOT NULL DEFAULT 0.0,  -- Wholesale (P2)
@@ -155,7 +155,7 @@ async fn create_schemas(pool: &SqlitePool) -> Result<(), sqlx::Error> {
             product_id      TEXT NOT NULL,
             variant_name    TEXT NOT NULL,
             codebar         TEXT UNIQUE NOT NULL,
-            quantity        INTEGER NOT NULL DEFAULT 0,
+            quantity        REAL NOT NULL DEFAULT 0.0,
             product_cost    REAL    NOT NULL DEFAULT 0.0,
             selling_price_1 REAL    NOT NULL DEFAULT 0.0,
             created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,

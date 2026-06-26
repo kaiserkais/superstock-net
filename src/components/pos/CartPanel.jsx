@@ -3,6 +3,7 @@ import {
   IconUser, IconChevronRight, IconShoppingCart,
   IconEdit, IconCash, IconPlayerPause, IconTrash,
   IconCreditCard, IconReceipt, IconTag, IconPlus,
+  IconLoader,
 } from "@tabler/icons-react";
 import usePosStore from "../../store/usePosStore";
 import { C, fmt } from "./posTheme";
@@ -10,7 +11,7 @@ import CartItemRow from "./CartItemRow";
 import Btn from "./ui/Btn";
 
 export default function CartPanel({
-  onExecuteSale, onPark, onClear, onPrintInvoice, onPrintReceipt,
+  onExecuteSale, onPark, onClear, onPrintInvoice, onPrintReceipt,saleLoading = false
 }) {
   const {
     cartItems, cartClient,
@@ -123,19 +124,31 @@ export default function CartPanel({
       <div style={{ padding: "10px 14px", display: "flex", flexDirection: "column", gap: 7 }}>
         <button
           onClick={onExecuteSale}
-          disabled={isEmpty}
+          disabled={isEmpty || saleLoading}
           style={{
             width: "100%", height: 44, borderRadius: 10, border: "none",
-            background: isEmpty ? C.border : C.accent,
-            color: isEmpty ? C.text3 : "#fff",
-            fontSize: 14, fontWeight: 600, cursor: isEmpty ? "not-allowed" : "pointer",
+            background: isEmpty || saleLoading ? C.border : C.accent,
+            color: isEmpty || saleLoading ? C.text3 : "#fff",
+            fontSize: 14, fontWeight: 600, cursor: isEmpty || saleLoading ? "not-allowed" : "pointer",
             display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
             fontFamily: "inherit", transition: "background 0.13s",
           }}
         >
-          <IconCash size={18} stroke={2} />
+          {
+          saleLoading ? (
+            <>
+            <IconLoader size={17} stroke={2} style={{animation: 'spin 1s Linear infinit'}}/>
+            proccessing ...
+            </>
+          ) : (
+            <>
+            <IconCash size={18} stroke={2} />
           Execute sale
           <span style={{ fontSize: 10, opacity: 0.75, marginLeft: 2 }}>F5</span>
+            </>
+          ) 
+        }
+          
         </button>
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
