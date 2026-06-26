@@ -32,11 +32,13 @@ pub fn create_router(shared_state: Arc<AppState>) -> Router {
 
         // ── Products Catalog ───────────────────────────────────────────────────
         .route("/api/products",
+            
             get(products::get_products)
             .post(products::create_product)
         )
-        .route("/api/products/:id",
-            put(products::edit_product)
+        .route("/api/products/:id",get(products::get_product)
+        
+            .put(products::edit_product)
             .delete(products::delete_product)
         )
 

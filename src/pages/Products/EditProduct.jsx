@@ -41,63 +41,67 @@ export default function EditProduct({ onNavigate }) {
 
     // Hydrate existing inventory asset details on mount
     useEffect(() => {
-        async function fetchProductData() {
-            try {
-                const res = await fetch("/api/products");
-                if (!res.ok) throw new Error("Failed to read system catalog record");
-                
-                const catalog = await res.json();
-                const product = catalog.find((p) => p.id === id);
-                if (!product) {
+    async function fetchProductData() {
+        try {
+            // Direct fetch utilizing the specific parameter resource ID
+            const res = await fetch(`/api/products/${id}`);
+            if (!res.ok) {
+                if (res.status === 404) {
                     alert("🚨 Selected asset entry was missing or dropped.");
-                    if (onNavigate) onNavigate("list");
-                    return;
+                } else {
+                    throw new Error("Failed to read system catalog record");
                 }
-
-                // Hydrate base metadata structure
-                setProductType(product.product_type);
-                setBaseForm({
-                    name: product.name || "",
-                    reference: product.reference || "",
-                    codebar: product.codebar || "",
-                    quantity: String(product.quantity ?? 0),
-                    product_cost: String(product.product_cost ?? 0),
-                    selling_price_1: String(product.selling_price_1 ?? 0),
-                    selling_price_2: String(product.selling_price_2 ?? 0),
-                    selling_price_3: String(product.selling_price_3 ?? 0),
-                    selling_price_4: String(product.selling_price_4 ?? 0),
-                    measurement_unit: product.measurement_unit || "pcs",
-                    category_id: product.category_id || "cat_1",
-                    supplier_id: product.supplier_id || "s1",
-                    supplier_paid: "false"
-                });
-
-                // Hydrate existing image if tracked by database rows
-                
-                if (product.image_path) {
-                    
-                    setImagePreview(`/images/${product.image_path}`);
-                }
-
-                // Hydrate variation child configurations if flagged as variable type
-                if (product.product_type === "variable" && product.variants) {
-                    setVariations(product.variants.map(v => ({
-                        variant_name: v.variant_name,
-                        codebar: v.codebar,
-                        product_cost: v.product_cost,
-                        selling_price_1: v.selling_price_1,
-                        quantity: v.quantity
-                    })));
-                }
-                
-                setLoading(false);
-            } catch (err) {
-                console.error("Hydration runtime error:", err);
-                alert("❌ Critical communication failure resolving target metadata mapping.");
+                if (onNavigate) onNavigate("list");
+                return;
             }
+            
+            const product = await res.json();
+
+            // Hydrate base metadata structure
+            setProductType(product.product_type);
+            setBaseForm({
+                name: product.name || "",
+                reference: product.reference || "",
+                codebar: product.codebar || "",
+                quantity: String(product.quantity ?? 0),
+                product_cost: String(product.product_cost ?? 0),
+                selling_price_1: String(product.selling_price_1 ?? 0),
+                selling_price_2: String(product.selling_price_2 ?? 0),
+                selling_price_3: String(product.selling_price_3 ?? 0),
+                selling_price_4: String(product.selling_price_4 ?? 0),
+                measurement_unit: product.measurement_unit || "pcs",
+                category_id: product.category_id || "",
+                supplier_id: product.supplier_id || "",
+                supplier_paid: "false"
+            });
+
+            // Hydrate existing image if tracked by database rows
+            if (product.image_path) {
+                setImagePreview(`/images/${product.image_path}`);
+            }
+
+            // Hydrate variation child configurations if flagged as variable type
+            if (product.product_type === "variable" && product.variants) {
+                setVariations(product.variants.map(v => ({
+                    variant_name: v.variant_name,
+                    codebar: v.codebar,
+                    product_cost: v.product_cost,
+                    selling_price_1: v.selling_price_1,
+                    quantity: v.quantity
+                })));
+            }
+            
+            setLoading(false);
+        } catch (err) {
+            console.error("Hydration runtime error:", err);
+            alert("❌ Critical communication failure resolving target metadata mapping.");
         }
+    }
+    
+    if (id) {
         fetchProductData();
-    }, [id]);
+    }
+}, [id]);
 
     const handleFileStreamInject = (e) => {
         const targetFile = e.target.files[0];

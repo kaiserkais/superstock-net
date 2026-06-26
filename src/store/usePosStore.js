@@ -15,44 +15,49 @@ const usePosStore = create(
   immer((set, get) => ({
 
     // ── Remote data ───────────────────────────────────────────────────────────
-    products:   [],      // ProductOut[]
+    products: [],
+
+    productsTotal: 0,
+    productsPage: 1,
+    productsPerPage: 30,
+    productsHasMore: true,   // ProductOut[]
     categories: [],      // CategoryOut[]
-    clients:    [],      // CustomerOut[]
+    clients: [],      // CustomerOut[]
 
     // Loading / error states per resource
-    productsLoading:   false,
+    productsLoading: false,
     categoriesLoading: false,
-    clientsLoading:    false,
-    productsError:     null,
-    categoriesError:   null,
-    clientsError:      null,
+    clientsLoading: false,
+    productsError: null,
+    categoriesError: null,
+    clientsError: null,
 
     // Sale submission state
     saleLoading: false,
-    saleError:   null,
+    saleError: null,
 
     // ── Cart ──────────────────────────────────────────────────────────────────
     // Each item explicitly captures 'name', 'cost', 'unitPrice', and 'unit' 
     // to safeguard historical snapshotting integrity.
-    cartItems:      [],    // [{ cartId, productId, variantId?, name, qty, unit, unitPrice, cost, lineTotal, isWeighted }]
-    cartClient:     null,  // Assigned customer object
+    cartItems: [],    // [{ cartId, productId, variantId?, name, qty, unit, unitPrice, cost, lineTotal, isWeighted }]
+    cartClient: null,  // Assigned customer object
     cartAdjustment: { type: "discount", value: 0 },
 
     // ── Parked carts ──────────────────────────────────────────────────────────
     parkedCarts: [],
 
     // ── Modals ────────────────────────────────────────────────────────────────
-    weightModal:        null,   // { product, mode: 'add'|'edit', cartId? }
-    variantModal:       null,   // { product }
-    clientModal:        false,
-    totalEditModal:     false,
-    confirmClearModal:  false,
+    weightModal: null,   // { product, mode: 'add'|'edit', cartId? }
+    variantModal: null,   // { product }
+    clientModal: false,
+    totalEditModal: false,
+    confirmClearModal: false,
 
     // ── Product grid ──────────────────────────────────────────────────────────
-    search:         "",
+    search: "",
     categoryFilter: "all",
-    gridPage:       1,
-    PAGE_SIZE:      30,
+    gridPage: 1,
+    PAGE_SIZE: 30,
 
     // ── Barcode buffer ────────────────────────────────────────────────────────
     barcodeBuffer: "",
@@ -62,12 +67,47 @@ const usePosStore = create(
     // ─────────────────────────────────────────────────────────────────────────
 
     /** Load product catalog from the backend */
-    loadProducts: async () => {
-      set((s) => { s.productsLoading = true; s.productsError = null; });
-      try {
-        const data = await posRepository.getProducts();
+    loadProducts: async (reset = true) => {
+      // 1. If resetting, force the page back to 1 immediately
+      if (reset) {
         set((s) => {
-          s.products = data;
+          s.productsPage = 1;
+          s.productsHasMore = true;
+          // Optional: s.products = []; // Clear current list to avoid layout jumps
+        });
+      }
+
+      const {
+        productsPage,
+        productsPerPage,
+        search,
+      } = get();
+
+      set((s) => {
+        s.productsLoading = true;
+        s.productsError = null;
+      });
+
+      try {
+        const response = await posRepository.getProducts(
+          productsPage,
+          productsPerPage,
+          search
+        );
+
+        set((s) => {
+          if (reset) {
+            s.products = response.data;
+          } else {
+            // Prevent duplicate items if network requests overlap
+            const existingIds = new Set(s.products.map((p) => p.id));
+            const newProducts = response.data.filter((p) => !existingIds.has(p.id));
+            s.products.push(...newProducts);
+          }
+
+          s.productsTotal = response.total;
+          // If our local array matches or exceeds total items, we are done
+          s.productsHasMore = s.products.length < response.total;
           s.productsLoading = false;
         });
       } catch (err) {
@@ -129,18 +169,18 @@ const usePosStore = create(
           (i) => i.productId === product.id && !i.variantId && !i.isWeighted
         );
         if (existing) {
-          existing.qty      += qty;
+          existing.qty += qty;
           existing.lineTotal = existing.qty * existing.unitPrice;
         } else {
           state.cartItems.push({
-            cartId:    uuid(),
+            cartId: uuid(),
             productId: product.id,
             variantId: null,
-            name:      product.name, // Snapshot name
+            name: product.name, // Snapshot name
             qty,
-            unit:      product.measurement_unit, // Snapshot unit
+            unit: product.measurement_unit, // Snapshot unit
             unitPrice: price, // Snapshot current unit price
-            cost:      product.product_cost, // Snapshot cost price
+            cost: product.product_cost, // Snapshot cost price
             lineTotal: qty * price,
             isWeighted: false,
           });
@@ -153,46 +193,46 @@ const usePosStore = create(
         const price = unitPrice ?? product.selling_price_1;
         let lineTotal, displayQty;
         if (byPrice !== null) {
-          lineTotal  = byPrice;
+          lineTotal = byPrice;
           displayQty = byPrice / price;
         } else {
           displayQty = qty;
-          lineTotal  = qty * price;
+          lineTotal = qty * price;
         }
         state.cartItems.push({
-          cartId:     uuid(),
-          productId:  product.id,
-          variantId:  null,
-          name:       product.name, // Snapshot name
-          qty:        parseFloat(displayQty.toFixed(3)),
-          unit:       product.measurement_unit, // Snapshot unit
-          unitPrice:  price, // Snapshot unit price
-          cost:       product.product_cost, // Snapshot cost price
+          cartId: uuid(),
+          productId: product.id,
+          variantId: null,
+          name: product.name, // Snapshot name
+          qty: parseFloat(displayQty.toFixed(3)),
+          unit: product.measurement_unit, // Snapshot unit
+          unitPrice: price, // Snapshot unit price
+          cost: product.product_cost, // Snapshot cost price
           lineTotal,
           isWeighted: true,
-          byPrice:    byPrice !== null,
+          byPrice: byPrice !== null,
         });
       });
     },
 
     addVariantProduct: (product, variant, qty = 1, unitPrice = null) => {
       set((state) => {
-        const price    = unitPrice ?? variant.selling_price_1;
+        const price = unitPrice ?? variant.selling_price_1;
         const existing = state.cartItems.find((i) => i.variantId === variant.id);
         if (existing) {
-          existing.qty      += qty;
+          existing.qty += qty;
           existing.lineTotal = existing.qty * existing.unitPrice;
         } else {
           state.cartItems.push({
-            cartId:     uuid(),
-            productId:  product.id,
-            variantId:  variant.id,
-            name:       variant.variant_name, // Snapshot variant-specific name
+            cartId: uuid(),
+            productId: product.id,
+            variantId: variant.id,
+            name: variant.variant_name, // Snapshot variant-specific name
             qty,
-            unit:       "pcs",
-            unitPrice:  price, // Snapshot unit price
-            cost:       variant.product_cost, // Snapshot variant cost price
-            lineTotal:  qty * price,
+            unit: "pcs",
+            unitPrice: price, // Snapshot unit price
+            cost: variant.product_cost, // Snapshot variant cost price
+            lineTotal: qty * price,
             isWeighted: false,
           });
         }
@@ -201,13 +241,13 @@ const usePosStore = create(
 
     updateQty: (cartId, delta) => {
       set((state) => {
-        const item   = state.cartItems.find((i) => i.cartId === cartId);
+        const item = state.cartItems.find((i) => i.cartId === cartId);
         if (!item) return;
         const newQty = item.qty + delta;
         if (newQty <= 0) {
           state.cartItems = state.cartItems.filter((i) => i.cartId !== cartId);
         } else {
-          item.qty       = newQty;
+          item.qty = newQty;
           item.lineTotal = newQty * item.unitPrice;
         }
       });
@@ -221,17 +261,17 @@ const usePosStore = create(
 
     editWeightedItem: (cartId, { qty, byPrice }, unitPrice) => {
       set((state) => {
-        const item  = state.cartItems.find((i) => i.cartId === cartId);
+        const item = state.cartItems.find((i) => i.cartId === cartId);
         if (!item) return;
         const price = unitPrice ?? item.unitPrice;
         if (byPrice !== null && byPrice !== undefined) {
-          item.qty       = parseFloat((byPrice / price).toFixed(3));
+          item.qty = parseFloat((byPrice / price).toFixed(3));
           item.lineTotal = byPrice;
-          item.byPrice   = true;
+          item.byPrice = true;
         } else {
-          item.qty       = parseFloat(qty.toFixed(3));
+          item.qty = parseFloat(qty.toFixed(3));
           item.lineTotal = qty * price;
-          item.byPrice   = false;
+          item.byPrice = false;
         }
         item.unitPrice = price;
       });
@@ -261,17 +301,17 @@ const usePosStore = create(
       set((state) => {
         if (state.cartItems.length === 0) return;
         state.parkedCarts.push({
-          id:         uuid(),
-          items:      JSON.parse(JSON.stringify(state.cartItems)),
-          client:     state.cartClient,
+          id: uuid(),
+          items: JSON.parse(JSON.stringify(state.cartItems)),
+          client: state.cartClient,
           adjustment: { ...state.cartAdjustment },
-          parkedAt:   new Date().toISOString(),
-          label:      state.cartClient
+          parkedAt: new Date().toISOString(),
+          label: state.cartClient
             ? state.cartClient.name
             : `Cart ${state.parkedCarts.length + 1}`,
         });
-        state.cartItems      = [];
-        state.cartClient     = null;
+        state.cartItems = [];
+        state.cartClient = null;
         state.cartAdjustment = { type: "discount", value: 0 };
       });
     },
@@ -283,21 +323,21 @@ const usePosStore = create(
 
         if (state.cartItems.length > 0) {
           state.parkedCarts.push({
-            id:         uuid(),
-            items:      JSON.parse(JSON.stringify(state.cartItems)),
-            client:     state.cartClient,
+            id: uuid(),
+            items: JSON.parse(JSON.stringify(state.cartItems)),
+            client: state.cartClient,
             adjustment: { ...state.cartAdjustment },
-            parkedAt:   new Date().toISOString(),
-            label:      state.cartClient
+            parkedAt: new Date().toISOString(),
+            label: state.cartClient
               ? state.cartClient.name
               : `Cart ${state.parkedCarts.length + 1}`,
           });
         }
 
-        const restored          = state.parkedCarts[idx];
-        state.cartItems         = restored.items;
-        state.cartClient        = restored.client;
-        state.cartAdjustment    = restored.adjustment ?? { type: "discount", value: 0 };
+        const restored = state.parkedCarts[idx];
+        state.cartItems = restored.items;
+        state.cartClient = restored.client;
+        state.cartAdjustment = restored.adjustment ?? { type: "discount", value: 0 };
         state.parkedCarts.splice(idx, 1);
       });
     },
@@ -316,30 +356,30 @@ const usePosStore = create(
       const { cartItems, cartClient, cartAdjustment, getCartTotals } = get();
 
       if (cartItems.length === 0) return { success: false, reason: "empty_cart" };
-      if (!userId)                return { success: false, reason: "no_user" };
+      if (!userId) return { success: false, reason: "no_user" };
 
       const { subtotal, adjustmentType, adjustmentValue, total } = getCartTotals();
 
       // Compiling the items payload using explicit snapshot values from cartItems
       const items = cartItems.map((item) => ({
-        product_id:   item.productId,
-        variant_id:   item.variantId ?? null,
+        product_id: item.productId,
+        variant_id: item.variantId ?? null,
         product_name: item.name,        // Preserved historical name/variant name
-        unit:         item.unit,        // Preserved historical unit (e.g., 'pcs', 'kg')
-        qty:          item.qty,         
-        unit_cost:    item.cost,        // Preserved historical purchasing cost
-        unit_price:   item.unitPrice,   // Preserved historical retail selling price
-        line_total:   item.lineTotal,   
-        is_weighted:  item.isWeighted,  
+        unit: item.unit,        // Preserved historical unit (e.g., 'pcs', 'kg')
+        qty: item.qty,
+        unit_cost: item.cost,        // Preserved historical purchasing cost
+        unit_price: item.unitPrice,   // Preserved historical retail selling price
+        line_total: item.lineTotal,
+        is_weighted: item.isWeighted,
       }));
 
       const payload = {
-        user_id:     userId,
-        session_id:  1, // Replace with dynamic active session ID tracking if added later
+        user_id: userId,
+        session_id: 1, // Replace with dynamic active session ID tracking if added later
         customer_id: cartClient?.id ?? null,
         subtotal,
-        adj_type:    adjustmentValue > 0 ? adjustmentType : "none",
-        adj_value:   adjustmentValue,
+        adj_type: adjustmentValue > 0 ? adjustmentType : "none",
+        adj_value: adjustmentValue,
         total,
         items,
       };
@@ -350,12 +390,12 @@ const usePosStore = create(
         const data = await posRepository.createSale(payload);
 
         set((s) => {
-          s.cartItems      = [];
-          s.cartClient     = null;
+          s.cartItems = [];
+          s.cartClient = null;
           s.cartAdjustment = { type: "discount", value: 0 };
-          s.saleLoading    = false;
+          s.saleLoading = false;
         });
-        
+
         return { success: true, saleId: data.id };
       } catch (err) {
         const message = err?.response?.data ?? "Sale submission failed";
@@ -366,8 +406,8 @@ const usePosStore = create(
 
     clearCart: () => {
       set((state) => {
-        state.cartItems      = [];
-        state.cartClient     = null;
+        state.cartItems = [];
+        state.cartClient = null;
         state.cartAdjustment = { type: "discount", value: 0 };
       });
     },
@@ -376,20 +416,48 @@ const usePosStore = create(
     // MODAL & FILTER CONTROLS 
     // ─────────────────────────────────────────────────────────────────────────
 
-    openWeightModal:       (product)        => set((s) => { s.weightModal = { product, mode: "add" }; }),
-    openWeightEditModal:  (cartId, product) => set((s) => { s.weightModal = { product, mode: "edit", cartId }; }),
-    closeWeightModal:     ()               => set((s) => { s.weightModal = null; }),
-    openVariantModal:     (product)        => set((s) => { s.variantModal = { product }; }),
-    closeVariantModal:    ()               => set((s) => { s.variantModal = null; }),
-    openClientModal:      ()               => set((s) => { s.clientModal = true; }),
-    closeClientModal:     ()               => set((s) => { s.clientModal = false; }),
-    openTotalEditModal:   ()               => set((s) => { s.totalEditModal = true; }),
-    closeTotalEditModal:  ()               => set((s) => { s.totalEditModal = false; }),
-    openConfirmClearModal:  ()             => set((s) => { s.confirmClearModal = true; }),
-    closeConfirmClearModal: ()             => set((s) => { s.confirmClearModal = false; }),
-    setSearch:          (v) => set((s) => { s.search = v; s.gridPage = 1; }),
-    setCategoryFilter: (v) => set((s) => { s.categoryFilter = v; s.gridPage = 1; }),
-    loadMoreProducts:  ()  => set((s) => { s.gridPage += 1; }),
+    openWeightModal: (product) => set((s) => { s.weightModal = { product, mode: "add" }; }),
+    openWeightEditModal: (cartId, product) => set((s) => { s.weightModal = { product, mode: "edit", cartId }; }),
+    closeWeightModal: () => set((s) => { s.weightModal = null; }),
+    openVariantModal: (product) => set((s) => { s.variantModal = { product }; }),
+    closeVariantModal: () => set((s) => { s.variantModal = null; }),
+    openClientModal: () => set((s) => { s.clientModal = true; }),
+    closeClientModal: () => set((s) => { s.clientModal = false; }),
+    openTotalEditModal: () => set((s) => { s.totalEditModal = true; }),
+    closeTotalEditModal: () => set((s) => { s.totalEditModal = false; }),
+    openConfirmClearModal: () => set((s) => { s.confirmClearModal = true; }),
+    closeConfirmClearModal: () => set((s) => { s.confirmClearModal = false; }),
+    setSearch: (v) =>
+      set((s) => {
+        s.search = v;
+        s.products = [];
+        s.productsPage = 1;
+        s.productsHasMore = true;
+      }),
+    setCategoryFilter: (v) => 
+      set((s) => { 
+        s.categoryFilter = v; 
+        s.products = [];      // 👈 Clear list on category change
+        s.productsPage = 1;   // 👈 Reset pagination index
+        s.productsHasMore = true;
+      }),
+    loadMoreProducts: async () => {
+      const {
+        productsLoading,
+        productsHasMore,
+        productsPage,
+        loadProducts,
+      } = get();
+
+      // Prevent duplicate requests
+      if (productsLoading || !productsHasMore) return;
+
+      set((s) => {
+        s.productsPage += 1;
+      });
+
+      await loadProducts(false);
+    },
     setBarcodeBuffer: (v) => set((s) => { s.barcodeBuffer = v; }),
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -397,7 +465,7 @@ const usePosStore = create(
     // ─────────────────────────────────────────────────────────────────────────
 
     processBarcode: (raw) => {
-      const code     = raw.trim();
+      const code = raw.trim();
       if (!code) return null;
       const products = get().products;
 
@@ -468,16 +536,20 @@ const usePosStore = create(
             )
         );
       }
-      const total   = list.length;
-      const visible = list.slice(0, gridPage * PAGE_SIZE);
-      return { products: visible, hasMore: visible.length < total, total };
+      const { productsHasMore, productsTotal } = get();
+
+      return {
+        products: list,
+        hasMore: productsHasMore,
+        total: productsTotal,
+      };
     },
 
     getCartTotals: () => {
       const { cartItems, cartAdjustment } = get();
       const subtotal = cartItems.reduce((s, i) => s + i.lineTotal, 0);
-      const adj      = cartAdjustment.value || 0;
-      const total    =
+      const adj = cartAdjustment.value || 0;
+      const total =
         cartAdjustment.type === "discount"
           ? Math.max(0, subtotal - adj)
           : subtotal + adj;
@@ -487,7 +559,7 @@ const usePosStore = create(
     getCartTotal: () => {
       const { cartItems, cartAdjustment } = get();
       const subtotal = cartItems.reduce((s, i) => s + i.lineTotal, 0);
-      const adj      = cartAdjustment.value || 0;
+      const adj = cartAdjustment.value || 0;
       return cartAdjustment.type === "discount" ? Math.max(0, subtotal - adj) : subtotal + adj;
     },
 

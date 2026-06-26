@@ -12,9 +12,11 @@ import {
   IconCheck,
   IconAlertCircle
 } from "@tabler/icons-react";
-import { C, fmt } from "../../components/pos/posTheme"; // Adjust the relative path to your theme file if needed
+import { C, fmt } from "../../components/pos/posTheme"; 
+import Pagination from "../../components/ui/Pagination";
 
 const API_BASE = "http://localhost:8080";
+const ITEMS_PER_PAGE = 20; // 👈 Configure row capacity bounds per slice sequence
 
 export default function SalesHistory() {
   // --- State Management ---
@@ -27,6 +29,9 @@ export default function SalesHistory() {
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
+
+  // --- Pagination State ---
+  const [currentPage, setCurrentPage] = useState(1); // 👈 Controls active pagination view index
 
   // --- Active Selection State (Master-Detail Pane) ---
   const [selectedSale, setSelectedSale] = useState(null);
@@ -52,6 +57,12 @@ export default function SalesHistory() {
     fetchSales();
   }, []);
 
+  // ─── RESET TO PAGE 1 ON FILTER MUTATIONS ───────────────────────────────────
+  // Whenever users search or click dropdowns, reset page indices to prevent empty overflow states
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchId, startDate, endDate, statusFilter]);
+
   // --- Fetch Detailed Sub-Items when a Sale Row is Selected ---
   const handleSelectSale = async (sale) => {
     setSelectedSale(sale);
@@ -76,10 +87,8 @@ export default function SalesHistory() {
     try {
       await axios.patch(`${API_BASE}/api/sales/${saleId}/void`);
       
-      // Optimistically update the list status in UI local state
       setSales(prev => prev.map(s => s.id === saleId ? { ...s, status: "voided" } : s));
       
-      // Update currently active side view details if open
       if (selectedSale && selectedSale.id === saleId) {
         setSelectedSale(prev => ({ ...prev, status: "voided" }));
         setSaleDetails(prev => prev ? { ...prev, status: "voided" } : null);
@@ -102,7 +111,7 @@ export default function SalesHistory() {
       }
       if (endDate) {
         const endThreshold = new Date(endDate);
-        endThreshold.setHours(23, 59, 59, 999); // Include full end day bounds
+        endThreshold.setHours(23, 59, 59, 999); 
         if (saleDate > endThreshold) {
           matchesDate = false;
         }
@@ -112,12 +121,16 @@ export default function SalesHistory() {
     return matchesId && matchesStatus && matchesDate;
   });
 
+  // ─── CALCULATE INTERIOR SLICING BOUNDS FOR CURRENT PAGE ─────────────────────
+  const totalPages = Math.ceil(filteredSales.length / ITEMS_PER_PAGE);
+  const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
+  const displayedSales = filteredSales.slice(startIndex, startIndex + ITEMS_PER_PAGE);
+
   // --- Live Reactive Metric Aggregations (KPIs) ---
-  // Note: Voided sales are safely stripped away from active financial sums
+  // Financial parameters remain calculated from full filter sets (independent of page cuts)
   const stats = filteredSales.reduce((acc, sale) => {
     if (sale.status !== "voided") {
       acc.revenue += sale.total;
-      // Calculate profit: uses 20% fallback margin if profit field isn't populated on database query
       acc.profit += (sale.profit !== undefined ? sale.profit : sale.total * 0.20);
       acc.activeCount += 1;
     }
@@ -135,10 +148,8 @@ export default function SalesHistory() {
 
       {/* ─── LIVE FINANCIAL KPI METRICS MATRIX ─── */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16, padding: "20px 24px 10px" }}>
-        
-        {/* Sales Volume Metric */}
         <div style={{ background: C.surface, borderRadius: 12, padding: 16, border: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 14 }}>
-          <div style={{ width: 44, height: 44, borderRadius: 10, background: "#E8F0FE", color: "#1A73E8", display: "flex", alignItems: "center", justifyValue: "center", justifyContent: "center" }}>
+          <div style={{ width: 44, height: 44, borderRadius: 10, background: "#E8F0FE", color: "#1A73E8", display: "flex", alignItems: "center", justifyContent: "center" }}>
             <IconShoppingBag size={22} />
           </div>
           <div>
@@ -149,7 +160,6 @@ export default function SalesHistory() {
           </div>
         </div>
 
-        {/* Gross Revenue Metric */}
         <div style={{ background: C.surface, borderRadius: 12, padding: 16, border: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 14 }}>
           <div style={{ width: 44, height: 44, borderRadius: 10, background: "#E6F4EA", color: "#137333", display: "flex", alignItems: "center", justifyContent: "center" }}>
             <IconCash size={22} />
@@ -160,7 +170,6 @@ export default function SalesHistory() {
           </div>
         </div>
 
-        {/* Net Profit Margin Metric */}
         <div style={{ background: C.surface, borderRadius: 12, padding: 16, border: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 14 }}>
           <div style={{ width: 44, height: 44, borderRadius: 10, background: "#EAF2F8", color: "#2980B9", display: "flex", alignItems: "center", justifyContent: "center" }}>
             <IconTrendingUp size={22} />
@@ -170,13 +179,10 @@ export default function SalesHistory() {
             <div style={{ fontSize: 22, fontWeight: 700, color: "#2980B9", marginTop: 2 }}>{fmt(stats.profit)}</div>
           </div>
         </div>
-
       </div>
 
       {/* ─── SEARCH & FILTER UTILITY MATRIX ─── */}
       <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, margin: "10px 24px 16px", padding: 14, display: "flex", flexWrap: "wrap", gap: 12, alignItems: "end" }}>
-        
-        {/* Search Input Box */}
         <div style={{ flex: "2 1 200px", minWidth: 180 }}>
           <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: C.text2, marginBottom: 6 }}>Search Invoice ID</label>
           <div style={{ position: "relative" }}>
@@ -191,7 +197,6 @@ export default function SalesHistory() {
           </div>
         </div>
 
-        {/* Date Ranges bounds */}
         <div style={{ flex: "1 1 140px" }}>
           <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: C.text2, marginBottom: 6 }}>From Date</label>
           <input 
@@ -212,7 +217,6 @@ export default function SalesHistory() {
           />
         </div>
 
-        {/* Status Dropdown selector */}
         <div style={{ flex: "1 1 130px" }}>
           <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: C.text2, marginBottom: 6 }}>Invoice Status</label>
           <select
@@ -226,7 +230,6 @@ export default function SalesHistory() {
           </select>
         </div>
 
-        {/* Reset Buttons */}
         <button 
           onClick={() => { setSearchId(""); setStartDate(""); setEndDate(""); setStatusFilter("all"); }}
           style={{ height: 36, padding: "0 14px", borderRadius: 8, border: `1px solid ${C.border}`, background: C.surface, color: C.text2, fontSize: 12, fontWeight: 500, cursor: "pointer" }}
@@ -238,7 +241,7 @@ export default function SalesHistory() {
       {/* ─── MAIN MASTER-DETAIL WORKSPACE ─── */}
       <div style={{ flex: 1, display: "flex", overflow: "hidden", padding: "0 24px 24px", gap: 16 }}>
         
-        {/* LEFT COMPONENT: MASTER DATATABLE */}
+        {/* LEFT COMPONENT: MASTER DATATABLE CONTAINER */}
         <div style={{ flex: 1, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, display: "flex", flexDirection: "column", overflow: "hidden" }}>
           {loading ? (
             <div style={{ padding: 40, textAlign: "center", color: C.text3, fontSize: 13 }}>Reading audit stream logs...</div>
@@ -247,66 +250,78 @@ export default function SalesHistory() {
           ) : filteredSales.length === 0 ? (
             <div style={{ padding: 40, textAlign: "center", color: C.text3, fontSize: 13 }}>No matching transaction receipts found.</div>
           ) : (
-            <div style={{ flex: 1, overflowY: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left", fontSize: 13 }}>
-                <thead style={{ background: C.bg, position: "sticky", top: 0, zIndex: 1, borderBottom: `1px solid ${C.border}` }}>
-                  <tr>
-                    <th style={{ padding: "12px 16px", color: C.text2, fontWeight: 600 }}>Invoice ID</th>
-                    <th style={{ padding: "12px 16px", color: C.text2, fontWeight: 600 }}>Timestamp Date</th>
-                    <th style={{ padding: "12px 16px", color: C.text2, fontWeight: 600 }}>Client Target</th>
-                    <th style={{ padding: "12px 16px", color: C.text2, fontWeight: 600 }}>Total (DA)</th>
-                    <th style={{ padding: "12px 16px", color: C.text2, fontWeight: 600, textAnchor: "middle" }}>Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredSales.map((sale) => {
-                    const isSelected = selectedSale?.id === sale.id;
-                    const isVoided = sale.status === "voided";
+            // Flex box wrapping both table body space and footer components neatly
+            <>
+              <div style={{ flex: 1, overflowY: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left", fontSize: 13 }}>
+                  <thead style={{ background: C.bg, position: "sticky", top: 0, zIndex: 1, borderBottom: `1px solid ${C.border}` }}>
+                    <tr>
+                      <th style={{ padding: "12px 16px", color: C.text2, fontWeight: 600 }}>Invoice ID</th>
+                      <th style={{ padding: "12px 16px", color: C.text2, fontWeight: 600 }}>Timestamp Date</th>
+                      <th style={{ padding: "12px 16px", color: C.text2, fontWeight: 600 }}>Client Target</th>
+                      <th style={{ padding: "12px 16px", color: C.text2, fontWeight: 600 }}>Total (DA)</th>
+                      <th style={{ padding: "12px 16px", color: C.text2, fontWeight: 600 }}>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {/* 👇 Changed maps from filteredSales to display only displayedSales items */}
+                    {displayedSales.map((sale) => {
+                      const isSelected = selectedSale?.id === sale.id;
+                      const isVoided = sale.status === "voided";
 
-                    return (
-                      <tr 
-                        key={sale.id}
-                        onClick={() => handleSelectSale(sale)}
-                        style={{ 
-                          borderBottom: `1px solid ${C.border}`, 
-                          cursor: "pointer",
-                          background: isSelected ? "#F1F5F9" : "transparent",
-                          transition: "background 0.1s ease"
-                        }}
-                      >
-                        <td style={{ padding: "14px 16px", fontWeight: 600, color: C.text1 }}>
-                          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                            <IconReceipt size={14} style={{ color: C.text3 }} />
-                            {sale.id}
-                          </div>
-                        </td>
-                        <td style={{ padding: "14px 16px", color: C.text2 }}>
-                          {new Date(sale.created_at).toLocaleString("fr-DZ", { dateStyle: "short", timeStyle: "short" })}
-                        </td>
-                        <td style={{ padding: "14px 16px", color: C.text1 }}>
-                          {sale.customer_name || <span style={{ color: C.text3, fontSize: 12 }}>Walk-in Client</span>}
-                        </td>
-                        <td style={{ padding: "14px 16px", fontWeight: 700, color: isVoided ? C.text3 : C.text1, textDecoration: isVoided ? "line-through" : "none" }}>
-                          {fmt(sale.total)}
-                        </td>
-                        <td style={{ padding: "14px 16px" }}>
-                          <span style={{ 
-                            fontSize: 11, 
-                            fontWeight: 600, 
-                            padding: "3px 8px", 
-                            borderRadius: 6,
-                            background: isVoided ? "#FEE2E2" : "#DCFCE7",
-                            color: isVoided ? "#EF4444" : "#15803D"
-                          }}>
-                            {sale.status}
-                          </span>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+                      return (
+                        <tr 
+                          key={sale.id}
+                          onClick={() => handleSelectSale(sale)}
+                          style={{ 
+                            borderBottom: `1px solid ${C.border}`, 
+                            cursor: "pointer",
+                            background: isSelected ? "#F1F5F9" : "transparent",
+                            transition: "background 0.1s ease"
+                          }}
+                        >
+                          <td style={{ padding: "14px 16px", fontWeight: 600, color: C.text1 }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                              <IconReceipt size={14} style={{ color: C.text3 }} />
+                              {sale.id}
+                            </div>
+                          </td>
+                          <td style={{ padding: "14px 16px", color: C.text2 }}>
+                            {new Date(sale.created_at).toLocaleString("fr-DZ", { dateStyle: "short", timeStyle: "short" })}
+                          </td>
+                          <td style={{ padding: "14px 16px", color: C.text1 }}>
+                            {sale.customer_name || <span style={{ color: C.text3, fontSize: 12 }}>Walk-in Client</span>}
+                          </td>
+                          <td style={{ padding: "14px 16px", fontWeight: 700, color: isVoided ? C.text3 : C.text1, textDecoration: isVoided ? "line-through" : "none" }}>
+                            {fmt(sale.total)}
+                          </td>
+                          <td style={{ padding: "14px 16px" }}>
+                            <span style={{ 
+                              fontSize: 11, 
+                              fontWeight: 600, 
+                              padding: "3px 8px", 
+                              borderRadius: 6,
+                              background: isVoided ? "#FEE2E2" : "#DCFCE7",
+                              color: isVoided ? "#EF4444" : "#15803D"
+                            }}>
+                              {sale.status}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* ─── PAGINATION BOTTOM CONTROL BAR ─── */}
+              {/* 👇 Render the reusable layout component directly inside the master panel card layout bounds */}
+              <Pagination 
+                currentPage={currentPage}
+                totalPages={totalPages}
+                onPageChange={setCurrentPage}
+              />
+            </>
           )}
         </div>
 
@@ -314,8 +329,6 @@ export default function SalesHistory() {
         <div style={{ width: 380, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, display: "flex", flexDirection: "column", overflow: "hidden" }}>
           {selectedSale ? (
             <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
-              
-              {/* Context Action Header */}
               <div style={{ padding: "16px", borderBottom: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", background: C.bg }}>
                 <div>
                   <div style={{ fontSize: 11, fontWeight: 600, color: C.text3 }}>INVOICE SHEET</div>
@@ -329,10 +342,7 @@ export default function SalesHistory() {
                 </button>
               </div>
 
-              {/* Snapshot Payload Window */}
               <div style={{ flex: 1, overflowY: "auto", padding: 16 }}>
-                
-                {/* Meta Summary fields */}
                 <div style={{ display: "flex", flexDirection: "column", gap: 10, paddingBottom: 16, borderBottom: `1px solid ${C.border}`, fontSize: 12 }}>
                   <div style={{ display: "flex", justifyContent: "space-between" }}>
                     <span style={{ color: C.text3 }}>Cashier / Operator:</span>
@@ -348,7 +358,6 @@ export default function SalesHistory() {
                   </div>
                 </div>
 
-                {/* Sub-item Line Matrix */}
                 <div style={{ marginTop: 16 }}>
                   <div style={{ fontSize: 11, fontWeight: 600, color: C.text2, marginBottom: 10 }}>CART CONTENT SNAPSHOT</div>
                   
@@ -370,7 +379,6 @@ export default function SalesHistory() {
                         </div>
                       ))}
 
-                      {/* Mathematical Calculations breakdown */}
                       <div style={{ borderTop: `1px dashed ${C.border}`, paddingTop: 12, display: "flex", flexDirection: "column", gap: 8, fontSize: 12, color: C.text2 }}>
                         <div style={{ display: "flex", justifyContent: "space-between" }}>
                           <span>Subtotal Basket:</span>
@@ -394,7 +402,6 @@ export default function SalesHistory() {
                 </div>
               </div>
 
-              {/* Operational Action Footer Bar */}
               <div style={{ padding: 16, borderTop: `1px solid ${C.border}`, background: C.bg }}>
                 {selectedSale.status === "voided" ? (
                   <div style={{ display: "flex", alignItems: "center", gap: 8, color: "#EF4444", justifyContent: "center", fontSize: 13, fontWeight: 500, background: "#FEE2E2", padding: "10px", borderRadius: 8 }}>
@@ -426,7 +433,6 @@ export default function SalesHistory() {
                   </button>
                 )}
               </div>
-
             </div>
           ) : (
             <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 32, color: C.text3, textAlign: "center" }}>

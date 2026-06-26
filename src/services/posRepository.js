@@ -5,10 +5,17 @@ const API = axios.create({ baseURL: "http://127.0.0.1:8080" }); // or whatever p
 
 export const posRepository = {
   /** Fetch all products with their variants */
-  getProducts: async () => {
-    const { data } = await API.get("/api/products");
-    return data;
-  },
+  getProducts: async (page = 1, perPage = 30, search = "") => {
+  const { data } = await API.get("/api/products", {
+    params: {
+      page,
+      per_page: perPage,
+      search,
+    },
+  });
+
+  return data;
+},
 
   /** Fetch all categories */
   getCategories: async () => {
