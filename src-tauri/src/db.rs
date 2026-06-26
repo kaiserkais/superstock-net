@@ -140,6 +140,7 @@ async fn create_schemas(pool: &SqlitePool) -> Result<(), sqlx::Error> {
             category_id      TEXT,
             supplier_id      TEXT,
             image_path       TEXT,
+            is_archived         INTEGER NOT NULL DEFAULT 0 CHECK(is_archived IN (0, 1)), -- 🌟 Soft delete flag
             created_at       DATETIME DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY(category_id) REFERENCES categories(id) ON DELETE SET NULL,
             FOREIGN KEY(supplier_id) REFERENCES suppliers(id)  ON DELETE SET NULL
@@ -158,6 +159,7 @@ async fn create_schemas(pool: &SqlitePool) -> Result<(), sqlx::Error> {
             quantity        REAL NOT NULL DEFAULT 0.0,
             product_cost    REAL    NOT NULL DEFAULT 0.0,
             selling_price_1 REAL    NOT NULL DEFAULT 0.0,
+            is_archived        INTEGER NOT NULL DEFAULT 0 CHECK(is_archived IN (0, 1)), -- 🌟 Soft delete flag
             created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY(product_id) REFERENCES products(id) ON DELETE CASCADE
         );",
@@ -166,110 +168,60 @@ async fn create_schemas(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     .await?;
 
     // ── 7. Sales (transaction header) ─────────────────────────────────────────
-    //
-    //  One row per completed register transaction.
-    //
-    //  adj_type / adj_value mirror the cartAdjustment in usePosStore:
-    //    'discount'  → total = subtotal − adj_value
-    //    'surcharge' → total = subtotal + adj_value
-    //    'none'      → total = subtotal  (adj_value is 0)
-    //
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS sales (
             id          TEXT    PRIMARY KEY,
-
-            -- Ownership / context
             user_id     TEXT    NOT NULL,               -- Cashier who processed the sale
-            session_id  INTEGER NOT NULL DEFAULT 1,     -- Shift / season (future feature, starts at 1)
+            session_id  INTEGER NOT NULL DEFAULT 1,     -- Shift / season
             customer_id TEXT,                           -- NULL = anonymous walk-in
-
-            -- Financial summary (denormalised for fast reporting — do not derive from items)
             subtotal    REAL    NOT NULL DEFAULT 0.0,   -- Sum of all line_total before adjustment
-            adj_type    TEXT    NOT NULL DEFAULT 'none'
-                        CHECK(adj_type IN ('discount', 'surcharge', 'none')),
-            adj_value   REAL    NOT NULL DEFAULT 0.0,   -- DA amount of the adjustment
+            adj_type    TEXT    NOT NULL DEFAULT 'none' CHECK(adj_type IN ('discount', 'surcharge', 'none')),
+            adj_value   REAL    NOT NULL DEFAULT 0.0,   -- Amount of the adjustment
             total       REAL    NOT NULL DEFAULT 0.0,   -- Final amount charged
-
-            -- Lifecycle
-            status      TEXT    NOT NULL DEFAULT 'completed'
-                        CHECK(status IN ('completed', 'voided', 'returned')),
-
-            -- Audit
+            status      TEXT    NOT NULL DEFAULT 'completed' CHECK(status IN ('completed', 'voided', 'returned')),
             created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-
             FOREIGN KEY(user_id)     REFERENCES users(id)     ON DELETE RESTRICT,
             FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE SET NULL
         );"
     ).execute(pool).await?;
 
-    // ── 8. Sale items (line items) ────────────────────────────────────────────
-    //
-    //  One row per product / variant within a sale.
-    //
-    //  Prices are SNAPSHOTTED at point-of-sale so that future price changes
-    //  do not corrupt historical records. Never JOIN products/variants for
-    //  price data on an existing sale — use the snapshot columns instead.
-    //
+    // ── 8. Sale items (line items with Snapshotting Engine) ───────────────────
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS sale_items (
             id           TEXT PRIMARY KEY,
             sale_id      TEXT NOT NULL,
 
-            -- Product references
-            product_id   TEXT NOT NULL,    -- Always set (parent product)
-            variant_id   TEXT,             -- Set only for variable-type products
+            -- Product references (Made NULLABLE so hard deletes won't break logs)
+            product_id   TEXT, 
+            variant_id   TEXT, 
 
-            -- Point-of-sale snapshot (immutable after insert)
-            product_name TEXT    NOT NULL,              -- Denormalised display name
+            -- 🌟 THE IMMUTABLE SNAPSHOT FIELDS 🌟
+            product_name TEXT    NOT NULL, -- Saved product title
+            variant_name TEXT,             -- Saved variant title (e.g., 'Size 42 - Black')
+            codebar      TEXT,             -- Saved codebar at checkout point
             unit         TEXT    NOT NULL DEFAULT 'pcs',
-            qty          REAL    NOT NULL DEFAULT 1.0,  -- Decimal for weighted items
-            unit_cost    REAL    NOT NULL DEFAULT 0.0,  -- Cost at time of sale (margin calc)
-            unit_price   REAL    NOT NULL DEFAULT 0.0,  -- Price actually charged per unit
+            qty          REAL    NOT NULL DEFAULT 1.0,  
+            unit_cost    REAL    NOT NULL DEFAULT 0.0,  -- Historic cost (for clean profit margins)
+            unit_price   REAL    NOT NULL DEFAULT 0.0,  -- Actual historic price charged
             line_total   REAL    NOT NULL DEFAULT 0.0,  -- qty × unit_price
 
-            -- Weighted-item flag
-            is_weighted  INTEGER NOT NULL DEFAULT 0
-                         CHECK(is_weighted IN (0, 1)),  -- 0 = pcs, 1 = kg/g/m etc.
+            is_weighted  INTEGER NOT NULL DEFAULT 0 CHECK(is_weighted IN (0, 1)),
 
             FOREIGN KEY(sale_id)    REFERENCES sales(id)            ON DELETE CASCADE,
-            FOREIGN KEY(product_id) REFERENCES products(id)         ON DELETE RESTRICT,
-            FOREIGN KEY(variant_id) REFERENCES product_variants(id) ON DELETE RESTRICT
+            FOREIGN KEY(product_id) REFERENCES products(id)         ON DELETE SET NULL, -- Safe fallback
+            FOREIGN KEY(variant_id) REFERENCES product_variants(id) ON DELETE SET NULL  -- Safe fallback
         );",
     )
     .execute(pool)
     .await?;
 
     // ── Indexes ───────────────────────────────────────────────────────────────
-
-    // sales — session reports (daily / shift)
-    sqlx::query("CREATE INDEX IF NOT EXISTS idx_sales_session    ON sales(session_id);")
-        .execute(pool)
-        .await?;
-
-    // sales — per-cashier queries
-    sqlx::query("CREATE INDEX IF NOT EXISTS idx_sales_user       ON sales(user_id);")
-        .execute(pool)
-        .await?;
-
-    // sales — customer history & debt reconciliation
-    sqlx::query("CREATE INDEX IF NOT EXISTS idx_sales_customer   ON sales(customer_id);")
-        .execute(pool)
-        .await?;
-
-    // sales — date-range filters (dashboard, reports)
-    sqlx::query("CREATE INDEX IF NOT EXISTS idx_sales_created_at ON sales(created_at);")
-        .execute(pool)
-        .await?;
-
-    // sale_items — all items belonging to a sale
-    sqlx::query("CREATE INDEX IF NOT EXISTS idx_sale_items_sale    ON sale_items(sale_id);")
-        .execute(pool)
-        .await?;
-
-    // sale_items — product sales history
-    sqlx::query("CREATE INDEX IF NOT EXISTS idx_sale_items_product ON sale_items(product_id);")
-        .execute(pool)
-        .await?;
+    sqlx::query("CREATE INDEX IF NOT EXISTS idx_sales_session     ON sales(session_id);").execute(pool).await?;
+    sqlx::query("CREATE INDEX IF NOT EXISTS idx_sales_user        ON sales(user_id);").execute(pool).await?;
+    sqlx::query("CREATE INDEX IF NOT EXISTS idx_sales_customer    ON sales(customer_id);").execute(pool).await?;
+    sqlx::query("CREATE INDEX IF NOT EXISTS idx_sales_created_at  ON sales(created_at);").execute(pool).await?;
+    sqlx::query("CREATE INDEX IF NOT EXISTS idx_sale_items_sale   ON sale_items(sale_id);").execute(pool).await?;
+    sqlx::query("CREATE INDEX IF NOT EXISTS idx_sale_items_product ON sale_items(product_id);").execute(pool).await?;
 
     Ok(())
 }

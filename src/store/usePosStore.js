@@ -1,10 +1,11 @@
 /**
  * usePosStore.js — Zustand state management for the POS terminal
- * Now strictly handles state. Network calls are delegated to posRepository.
+ * Handles application state. Network calls are delegated to posRepository.
+ * Fully optimized for Historical Snapshotting of sales records.
  */
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
-import { posRepository } from "../services/posRepository"; // <-- Update this path as needed
+import { posRepository } from "../services/posRepository"; // Update this path based on your directory structure
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 const uuid = () => Math.random().toString(36).slice(2, 10);
@@ -31,8 +32,10 @@ const usePosStore = create(
     saleError:   null,
 
     // ── Cart ──────────────────────────────────────────────────────────────────
+    // Each item explicitly captures 'name', 'cost', 'unitPrice', and 'unit' 
+    // to safeguard historical snapshotting integrity.
     cartItems:      [],    // [{ cartId, productId, variantId?, name, qty, unit, unitPrice, cost, lineTotal, isWeighted }]
-    cartClient:     null,  // assigned customer object
+    cartClient:     null,  // Assigned customer object
     cartAdjustment: { type: "discount", value: 0 },
 
     // ── Parked carts ──────────────────────────────────────────────────────────
@@ -116,7 +119,7 @@ const usePosStore = create(
     },
 
     // ─────────────────────────────────────────────────────────────────────────
-    // CART ACTIONS (Unchanged)
+    // CART ACTIONS (Captures immutable field states at insertion time)
     // ─────────────────────────────────────────────────────────────────────────
 
     addSimpleProduct: (product, qty = 1, unitPrice = null) => {
@@ -133,11 +136,11 @@ const usePosStore = create(
             cartId:    uuid(),
             productId: product.id,
             variantId: null,
-            name:      product.name,
+            name:      product.name, // Snapshot name
             qty,
-            unit:      product.measurement_unit,
-            unitPrice: price,
-            cost:      product.product_cost,
+            unit:      product.measurement_unit, // Snapshot unit
+            unitPrice: price, // Snapshot current unit price
+            cost:      product.product_cost, // Snapshot cost price
             lineTotal: qty * price,
             isWeighted: false,
           });
@@ -160,11 +163,11 @@ const usePosStore = create(
           cartId:     uuid(),
           productId:  product.id,
           variantId:  null,
-          name:       product.name,
+          name:       product.name, // Snapshot name
           qty:        parseFloat(displayQty.toFixed(3)),
-          unit:       product.measurement_unit,
-          unitPrice:  price,
-          cost:       product.product_cost,
+          unit:       product.measurement_unit, // Snapshot unit
+          unitPrice:  price, // Snapshot unit price
+          cost:       product.product_cost, // Snapshot cost price
           lineTotal,
           isWeighted: true,
           byPrice:    byPrice !== null,
@@ -184,11 +187,11 @@ const usePosStore = create(
             cartId:     uuid(),
             productId:  product.id,
             variantId:  variant.id,
-            name:       variant.variant_name,
+            name:       variant.variant_name, // Snapshot variant-specific name
             qty,
             unit:       "pcs",
-            unitPrice:  price,
-            cost:       variant.product_cost,
+            unitPrice:  price, // Snapshot unit price
+            cost:       variant.product_cost, // Snapshot variant cost price
             lineTotal:  qty * price,
             isWeighted: false,
           });
@@ -306,7 +309,7 @@ const usePosStore = create(
     },
 
     // ─────────────────────────────────────────────────────────────────────────
-    // EXECUTE SALE
+    // EXECUTE SALE (Compiles snapshot values into the outbound network request)
     // ─────────────────────────────────────────────────────────────────────────
 
     executeSale: async (userId) => {
@@ -317,21 +320,22 @@ const usePosStore = create(
 
       const { subtotal, adjustmentType, adjustmentValue, total } = getCartTotals();
 
+      // Compiling the items payload using explicit snapshot values from cartItems
       const items = cartItems.map((item) => ({
         product_id:   item.productId,
         variant_id:   item.variantId ?? null,
-        product_name: item.name,
-        unit:         item.unit,
-        qty:          item.qty,
-        unit_cost:    item.cost,
-        unit_price:   item.unitPrice,
-        line_total:   item.lineTotal,
-        is_weighted:  item.isWeighted,
+        product_name: item.name,        // Preserved historical name/variant name
+        unit:         item.unit,        // Preserved historical unit (e.g., 'pcs', 'kg')
+        qty:          item.qty,         
+        unit_cost:    item.cost,        // Preserved historical purchasing cost
+        unit_price:   item.unitPrice,   // Preserved historical retail selling price
+        line_total:   item.lineTotal,   
+        is_weighted:  item.isWeighted,  
       }));
 
       const payload = {
         user_id:     userId,
-        session_id:  1,
+        session_id:  1, // Replace with dynamic active session ID tracking if added later
         customer_id: cartClient?.id ?? null,
         subtotal,
         adj_type:    adjustmentValue > 0 ? adjustmentType : "none",
@@ -342,7 +346,7 @@ const usePosStore = create(
 
       set((s) => { s.saleLoading = true; s.saleError = null; });
       try {
-        // Delegate to repository
+        // Delegate to repository network boundary
         const data = await posRepository.createSale(payload);
 
         set((s) => {
@@ -369,10 +373,10 @@ const usePosStore = create(
     },
 
     // ─────────────────────────────────────────────────────────────────────────
-    // MODAL & FILTER CONTROLS (Unchanged)
+    // MODAL & FILTER CONTROLS 
     // ─────────────────────────────────────────────────────────────────────────
 
-    openWeightModal:      (product)        => set((s) => { s.weightModal = { product, mode: "add" }; }),
+    openWeightModal:       (product)        => set((s) => { s.weightModal = { product, mode: "add" }; }),
     openWeightEditModal:  (cartId, product) => set((s) => { s.weightModal = { product, mode: "edit", cartId }; }),
     closeWeightModal:     ()               => set((s) => { s.weightModal = null; }),
     openVariantModal:     (product)        => set((s) => { s.variantModal = { product }; }),
@@ -383,13 +387,13 @@ const usePosStore = create(
     closeTotalEditModal:  ()               => set((s) => { s.totalEditModal = false; }),
     openConfirmClearModal:  ()             => set((s) => { s.confirmClearModal = true; }),
     closeConfirmClearModal: ()             => set((s) => { s.confirmClearModal = false; }),
-    setSearch:         (v) => set((s) => { s.search = v; s.gridPage = 1; }),
+    setSearch:          (v) => set((s) => { s.search = v; s.gridPage = 1; }),
     setCategoryFilter: (v) => set((s) => { s.categoryFilter = v; s.gridPage = 1; }),
     loadMoreProducts:  ()  => set((s) => { s.gridPage += 1; }),
     setBarcodeBuffer: (v) => set((s) => { s.barcodeBuffer = v; }),
 
     // ─────────────────────────────────────────────────────────────────────────
-    // BARCODE SCANNER (Unchanged)
+    // BARCODE SCANNER 
     // ─────────────────────────────────────────────────────────────────────────
 
     processBarcode: (raw) => {
@@ -441,7 +445,7 @@ const usePosStore = create(
     },
 
     // ─────────────────────────────────────────────────────────────────────────
-    // DERIVED GETTERS (Unchanged)
+    // DERIVED GETTERS 
     // ─────────────────────────────────────────────────────────────────────────
 
     getFilteredProducts: () => {

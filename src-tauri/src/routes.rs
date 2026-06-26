@@ -7,7 +7,10 @@ use std::path::PathBuf;
 use tower_http::cors::CorsLayer;
 use tower_http::services::ServeDir;
 
-use crate::{AppState, auth, categories, customers, handlers, products, sales, staff, suppliers};
+use crate::{
+    AppState, auth, categories, customers, handlers, 
+    products, sales, staff, suppliers, sales_history, // 👈 Registered sales_history here
+};
 
 /// Helper function to resolve the native platform image directory used by DB storage
 fn get_system_image_dir() -> PathBuf {
@@ -76,17 +79,17 @@ pub fn create_router(shared_state: Arc<AppState>) -> Router {
             .delete(customers::delete_customer)
         )
 
-        // ── Sales ─────────────────────────────────────────────────────────────
-        // POST   /api/sales          → commit a completed cart
+        // ── Sales & History Registry ──────────────────────────────────────────
+        // POST   /api/sales          → commit a completed cart (original checkout module)
         // GET    /api/sales          → list sales (filterable by session/user/customer/status)
         // GET    /api/sales/:id      → fetch a single sale with line items
-        // PATCH  /api/sales/:id/void → mark a sale as voided (non-destructive)
+        // PATCH  /api/sales/:id/void → mark a sale as voided (with stock auto-replenishment)
         .route("/api/sales",
             post(sales::create_sale)
-            .get(sales::get_sales)
+            .get(sales_history::get_sales) // 👈 Swapped to use sales_history logic
         )
-        .route("/api/sales/:id",       get(sales::get_sale))
-        .route("/api/sales/:id/void",  patch(sales::void_sale))
+        .route("/api/sales/:id",       get(sales_history::get_sale))  // 👈 Swapped
+        .route("/api/sales/:id/void",  patch(sales_history::void_sale)) // 👈 Swapped
 
         // ── Static Assets ─────────────────────────────────────────────────────
         .nest_service("/images", ServeDir::new(get_system_image_dir()))

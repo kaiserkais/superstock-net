@@ -418,18 +418,27 @@ pub async fn get_sale(
     (StatusCode::OK, Json(sale)).into_response()
 }
 
-/// PATCH /api/sales/:id/void — Mark a sale as voided (non-destructive)
+/// PATCH /api/sales/:id/void — Mark a sale as voided (non-destructive) and restore inventory stock
 pub async fn void_sale(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
 
-    // Confirm sale exists and is in a voidable state
+    // ── Open a database transaction ───────────────────────────────────────────
+    let mut tx = match state.db.begin().await {
+        Ok(t) => t,
+        Err(e) => {
+            println!("❌ Failed to open void transaction for sale {}: {}", id, e);
+            return (StatusCode::INTERNAL_SERVER_ERROR, "Transaction open failure").into_response();
+        }
+    };
+
+    // Confirm sale exists and check its status within the transaction context
     let current_status: Option<String> = match sqlx::query_scalar(
         "SELECT status FROM sales WHERE id = ?"
     )
     .bind(&id)
-    .fetch_optional(&state.db)
+    .fetch_optional(&mut *tx)
     .await
     {
         Ok(row) => row,
@@ -446,22 +455,79 @@ pub async fn void_sale(
         _               => {}
     }
 
-    match sqlx::query("UPDATE sales SET status = 'voided' WHERE id = ?")
-        .bind(&id)
-        .execute(&state.db)
-        .await
+    // ── Fetch all line items to restore inventory stock ───────────────────────
+    let item_rows = match sqlx::query(
+        "SELECT product_id, variant_id, qty FROM sale_items WHERE sale_id = ?"
+    )
+    .bind(&id)
+    .fetch_all(&mut *tx)
+    .await
     {
-        Ok(_) => {
-            println!("🚫 Sale '{}' marked as voided.", id);
-            (
-                StatusCode::OK,
-                Json(serde_json::json!({ "id": id, "status": "voided" })),
-            )
-                .into_response()
-        }
+        Ok(rows) => rows,
         Err(e) => {
-            println!("❌ Failed to void sale {}: {}", id, e);
-            (StatusCode::INTERNAL_SERVER_ERROR, "Void operation failed").into_response()
+            println!("❌ Failed to retrieve line items for voiding sale {}: {}", id, e);
+            return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to load sale items for restocking").into_response();
+        }
+    };
+
+    // ── Loop and add stock back safely ────────────────────────────────────────
+    for row in item_rows {
+        let product_id: String = row.get("product_id");
+        let variant_id: Option<String> = row.get("variant_id");
+        let qty: f64 = row.get("qty");
+
+        if let Some(vid) = variant_id {
+            // Restore variant stock
+            if let Err(e) = sqlx::query(
+                "UPDATE product_variants 
+                 SET quantity = quantity + ? 
+                 WHERE id = ?"
+            )
+            .bind(qty)
+            .bind(&vid)
+            .execute(&mut *tx)
+            .await
+            {
+                println!("⚠️ Stock restoration warning: Failed to restock variant {}: {}", vid, e);
+            }
+        } else {
+            // Restore simple product stock
+            if let Err(e) = sqlx::query(
+                "UPDATE products 
+                 SET quantity = CAST(quantity AS REAL) + ? 
+                 WHERE id = ?"
+            )
+            .bind(qty)
+            .bind(&product_id)
+            .execute(&mut *tx)
+            .await
+            {
+                println!("⚠️ Stock restoration warning: Failed to restock product {}: {}", product_id, e);
+            }
         }
     }
+
+    // ── Change sale status ────────────────────────────────────────────────────
+    if let Err(e) = sqlx::query("UPDATE sales SET status = 'voided' WHERE id = ?")
+        .bind(&id)
+        .execute(&mut *tx)
+        .await
+    {
+        println!("❌ Failed to update status to voided for sale {}: {}", id, e);
+        return (StatusCode::INTERNAL_SERVER_ERROR, "Void status update failed").into_response();
+    }
+
+    // ── Commit atomic transaction ─────────────────────────────────────────────
+    if let Err(e) = tx.commit().await {
+        println!("❌ Void transaction commit failed for sale {}: {}", id, e);
+        return (StatusCode::INTERNAL_SERVER_ERROR, "Storage write checkpoint dropped").into_response();
+    }
+
+    println!("🚫 Sale '{}' successfully marked as voided and stock restored.", id);
+
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({ "id": id, "status": "voided" })),
+    )
+        .into_response()
 }

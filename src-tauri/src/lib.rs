@@ -8,6 +8,7 @@ mod customers;
 mod products;
 mod categories;
 mod sales;
+mod sales_history;
 
 use std::net::SocketAddr;
 use mdns_sd::{ServiceDaemon, ServiceInfo, ServiceEvent};

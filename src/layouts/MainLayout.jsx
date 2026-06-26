@@ -19,6 +19,7 @@ import {
     IconHelp,
     IconReceipt,
     IconPackage,
+    IconBook2,
 } from "@tabler/icons-react";
 import Dashboard from "../Dashboard/Dashboard";
 // Added Link here to handle routing
@@ -38,6 +39,7 @@ const NAV_MGMT = [
     // Added the link destination just for Staff
     { Icon: IconIdBadge, label: "Staff", badge: null, to: "/staff" },
     { Icon: IconTruck, label: "Suppliers", badge: null, to: "/suppliers" },
+    { Icon: IconBook2, label: "history", badge: null, to: "/history" },
 ];
 
 
