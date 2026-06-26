@@ -21,10 +21,11 @@ import Toast from "../components/pos/ui/Toast";
 
 export default function PosPage() {
   const { user } = useAuthStore();
+  const [activeMode, setActiveMode] = useState("barcode"); // 👈 Added shared input state mode ("barcode" | "search")
 
   const {
     cartItems, parkedCarts,
-    parkCart, openConfirmClearModal, executeSale,saleLoading,loadAll
+    parkCart, openConfirmClearModal, executeSale, saleLoading, loadAll
   } = usePosStore();
 
   const [toast, setToast] = useState(null);
@@ -32,24 +33,22 @@ export default function PosPage() {
   const showToast = (message, type = "success") => {
     setToast({ message, type, key: Date.now() });
   };
+
   useEffect(() => {
-    // This runs every time the POS page is opened/rendered
-    // It will fetch fresh products, categories, and clients from the DB
     loadAll();
   }, [loadAll]);
+
   const handleExecuteSale = async () => {
     if (cartItems.length === 0 || saleLoading) return;
     const result = await executeSale(user?.id);
     if (result.success) {
       showToast("Sale completed successfully!", "success");
-      // loadAll();
     } else {
       const msg = result.reason === 'empty_cart' ? 'Cart is empty' : 
-      result.reason === 'no_user' ? 'Not authenticated please log in' : 
-      result.reason;
-      showToast(msg, "error")
+                  result.reason === 'no_user' ? 'Not authenticated please log in' : 
+                  result.reason;
+      showToast(msg, "error");
     }
-    
   };
 
   const handlePark = () => {
@@ -59,16 +58,23 @@ export default function PosPage() {
   };
 
   const handlePrintInvoice = () => {
-    alert("🖨️ Print Invoice — Feature coming soon!\n\nThis will open the invoice print dialog.");
+    alert("🖨️ Print Invoice — Feature coming soon!");
   };
 
   const handlePrintReceipt = () => {
-    alert("🧾 Print Receipt — Feature coming soon!\n\nThis will send the receipt to the ESC/POS printer.");
+    alert("🧾 Print Receipt — Feature coming soon!");
   };
 
   // ── Keyboard shortcuts ──────────────────────────────────────────────────────
   useEffect(() => {
     const handler = (e) => {
+      // Intercept F2 immediately so it functions even when focused inside input logs
+      if (e.key === "F2") {
+        e.preventDefault();
+        setActiveMode((prev) => (prev === "barcode" ? "search" : "barcode"));
+        return;
+      }
+
       const tag = document.activeElement?.tagName;
       const inInput = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
       if (inInput) return;
@@ -100,20 +106,20 @@ export default function PosPage() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [cartItems]);
+  }, [cartItems, activeMode]); // 👈 Added activeMode dependency tracking
 
   return (
     <div style={{ display: "flex", height: "100%", overflow: "hidden", background: C.surface, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" }}>
 
       {/* ── LEFT: Product grid + barcode bar ─────────────────────────────── */}
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", background: C.surface }}>
-        <BarcodeBar />
-        <ProductGrid />
+        {/* Pass down shared active mode variables */}
+        <BarcodeBar activeMode={activeMode} setActiveMode={setActiveMode} />
+        <ProductGrid activeMode={activeMode} setActiveMode={setActiveMode} />
       </div>
 
       {/* ── RIGHT: Cart + parked ─────────────────────────────────────────── */}
       <div style={{ width: 320, display: "flex", flexDirection: "column", borderLeft: `1px solid ${C.border}`, background: C.card, overflow: "hidden", flexShrink: 0 }}>
-
         {/* Cart header */}
         <div style={{ padding: "10px 14px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
@@ -127,7 +133,7 @@ export default function PosPage() {
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
             <IconKeyboard size={13} stroke={1.5} style={{ color: C.text3 }} />
-            <span style={{ fontSize: 10, color: C.text3 }}>F3–F7</span>
+            <span style={{ fontSize: 10, color: C.text3 }}>F2–F7</span> {/* Updated text hint */}
           </div>
         </div>
 
@@ -139,7 +145,7 @@ export default function PosPage() {
             onClear={openConfirmClearModal}
             onPrintInvoice={handlePrintInvoice}
             onPrintReceipt={handlePrintReceipt}
-            saleLoading = {saleLoading}
+            saleLoading={saleLoading}
           />
         </div>
 
@@ -157,14 +163,12 @@ export default function PosPage() {
         )}
       </div>
 
-      {/* ── Modals ───────────────────────────────────────────────────────── */}
       <WeightModal />
       <VariantModal />
       <ClientModal />
       <TotalEditModal />
       <ConfirmClearModal />
 
-      {/* ── Toast ────────────────────────────────────────────────────────── */}
       {toast && (
         <Toast
           key={toast.key}

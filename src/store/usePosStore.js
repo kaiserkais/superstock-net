@@ -464,49 +464,80 @@ const usePosStore = create(
     // BARCODE SCANNER 
     // ─────────────────────────────────────────────────────────────────────────
 
-    processBarcode: (raw) => {
+    processBarcode: async (raw) => {
       const code = raw.trim();
       if (!code) return null;
-      const products = get().products;
 
-      for (const p of products) {
-        if (p.variants?.length) {
-          const v = p.variants.find((vr) => vr.codebar === code);
-          if (v) {
-            get().addVariantProduct(p, v);
-            return { type: "variant_added", product: p, variant: v };
+      // Inner helper to handle local scanning evaluation logic matching your rules
+      const evaluateProductMatch = (productList) => {
+        // A. Look for matches in variant sub-matrices first
+        for (const p of productList) {
+          if (p.variants?.length) {
+            const v = p.variants.find((vr) => vr.codebar === code);
+            if (v) {
+              return { type: "variant_added", product: p, variant: v };
+            }
           }
         }
+
+        // B. Look for matches against standard codebar
+        const byCodebar = productList.find((p) => p.codebar === code);
+        if (byCodebar) {
+          if (byCodebar.product_type === "variable") return { type: "variant_modal", product: byCodebar };
+          if (byCodebar.measurement_unit !== "pcs") return { type: "weight_modal", product: byCodebar };
+          return { type: "simple_added", product: byCodebar };
+        }
+
+        // C. Look for matches against standard product SKU / references
+        const byRef = productList.find((p) => p.reference?.toLowerCase() === code.toLowerCase());
+        if (byRef) {
+          if (byRef.product_type === "variable") return { type: "variant_modal", product: byRef };
+          if (byRef.measurement_unit !== "pcs") return { type: "weight_modal", product: byRef };
+          return { type: "simple_added", product: byRef };
+        }
+
+        return null;
+      };
+
+      // STEP 1: Attempt matching against current locally loaded page arrays
+      const localResult = evaluateProductMatch(get().products);
+      
+      if (localResult) {
+        // Execute state actions for cache hits
+        if (localResult.type === "variant_added") get().addVariantProduct(localResult.product, localResult.variant);
+        if (localResult.type === "simple_added") get().addSimpleProduct(localResult.product);
+        if (localResult.type === "variant_modal") get().openVariantModal(localResult.product);
+        if (localResult.type === "weight_modal") get().openWeightModal(localResult.product);
+        return localResult;
       }
 
-      const byCodebar = products.find((p) => p.codebar === code);
-      if (byCodebar) {
-        if (byCodebar.product_type === "variable") {
-          get().openVariantModal(byCodebar);
-          return { type: "variant_modal", product: byCodebar };
-        }
-        if (byCodebar.measurement_unit !== "pcs") {
-          get().openWeightModal(byCodebar);
-          return { type: "weight_modal", product: byCodebar };
-        }
-        get().addSimpleProduct(byCodebar);
-        return { type: "simple_added", product: byCodebar };
-      }
+      // STEP 2: Fallback to Backend if the scanned barcode isn't loaded in the current page block
+      try {
+        // Search the backend using code as the string query parameter (1 item limit)
+        const response = await posRepository.getProducts(1, 1, code);
 
-      const byRef = products.find(
-        (p) => p.reference?.toLowerCase() === code.toLowerCase()
-      );
-      if (byRef) {
-        if (byRef.product_type === "variable") {
-          get().openVariantModal(byRef);
-          return { type: "variant_modal", product: byRef };
+        if (response && response.data && response.data.length > 0) {
+          const matchedProduct = response.data[0];
+          const remoteResult = evaluateProductMatch([matchedProduct]);
+
+          if (remoteResult) {
+            // Push it into our local product list so components reference it seamlessly
+            set((state) => {
+              if (!state.products.some((p) => p.id === matchedProduct.id)) {
+                state.products.unshift(matchedProduct);
+              }
+            });
+
+            // Execute state actions for database hits
+            if (remoteResult.type === "variant_added") get().addVariantProduct(matchedProduct, remoteResult.variant);
+            if (remoteResult.type === "simple_added") get().addSimpleProduct(matchedProduct);
+            if (remoteResult.type === "variant_modal") get().openVariantModal(matchedProduct);
+            if (remoteResult.type === "weight_modal") get().openWeightModal(matchedProduct);
+            return remoteResult;
+          }
         }
-        if (byRef.measurement_unit !== "pcs") {
-          get().openWeightModal(byRef);
-          return { type: "weight_modal", product: byRef };
-        }
-        get().addSimpleProduct(byRef);
-        return { type: "simple_added", product: byRef };
+      } catch (err) {
+        console.error("❌ Live backend barcode query look-up collapsed:", err);
       }
 
       return { type: "not_found", code };

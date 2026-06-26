@@ -1,10 +1,10 @@
 import React, { useEffect, useRef } from "react";
-import { IconSearch, IconPackage, IconRefresh, IconAlertCircle, IconLoader2 } from "@tabler/icons-react";
+import { IconSearch, IconPackage, IconRefresh, IconAlertCircle, IconLoader2, IconBarcode } from "@tabler/icons-react";
 import usePosStore from "../../store/usePosStore";
 import { C } from "./posTheme";
 import ProductCard from "./ProductCard";
 
-export default function ProductGrid() {
+export default function ProductGrid({ activeMode, setActiveMode }) {
   const {
     search, setSearch,
     categoryFilter, setCategoryFilter,
@@ -18,6 +18,22 @@ export default function ProductGrid() {
   const { products, hasMore, total } = getFilteredProducts();
   const gridRef = useRef(null);
   const sentinelRef = useRef(null);
+  const searchInputRef = useRef(null);
+
+  // ── NEW: Clear search input when switching away to barcode mode ──────────────
+  useEffect(() => {
+    if (activeMode === "barcode") {
+      setSearch("");        // Clear the search buffer string in store
+      loadProducts(true);   // Reload products from page 1 without filters
+    }
+  }, [activeMode, setSearch, loadProducts]);
+
+  // Auto-focus text search field when search mode becomes active
+  useEffect(() => {
+    if (activeMode === "search") {
+      searchInputRef.current?.focus();
+    }
+  }, [activeMode]);
 
   // Bootstrap: load all remote data once on mount if not yet loaded
   useEffect(() => {
@@ -30,10 +46,8 @@ export default function ProductGrid() {
   // Infinite scroll sentinel observer
   useEffect(() => {
     if (!hasMore || productsLoading) return;
-
     const sentinel = sentinelRef.current;
     const root = gridRef.current;
-
     if (!sentinel || !root) return;
 
     const observer = new IntersectionObserver(
@@ -42,40 +56,57 @@ export default function ProductGrid() {
           loadMoreProducts();
         }
       },
-      {
-        root,
-        rootMargin: "150px", // Triggers slightly before reaching the absolute edge
-        threshold: 0,
-      }
+      { root, rootMargin: "150px", threshold: 0 }
     );
-
     observer.observe(sentinel);
-
     return () => observer.disconnect();
-  }, [hasMore, products.length, productsLoading]); // 👈 Crucial fix: Re-evaluates when item count or loading states change
+  }, [hasMore, products.length, productsLoading]);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
 
       {/* ── Search + filter bar ─────────────────────────────────────────── */}
-      <div style={{ padding: "10px 12px", borderBottom: `1px solid ${C.border}`, display: "flex", gap: 8, flexShrink: 0 }}>
-        <div style={{ flex: 1, position: "relative" }}>
-          <IconSearch size={15} stroke={1.75} style={{ position: "absolute", left: 9, top: "50%", transform: "translateY(-50%)", color: C.text3 }} />
-          <input
-            placeholder="Product name, ref, barcode…"
-            value={search}
-            onChange={async (e) => {
-              setSearch(e.target.value);
-              await loadProducts(true);
-            }}
-            style={{ width: "100%", height: 34, borderRadius: 8, border: `1px solid ${C.border}`, paddingLeft: 28, paddingRight: 10, fontSize: 12, fontFamily: "inherit", outline: "none", background: C.surface }}
-          />
-        </div>
+      <div style={{ padding: "10px 12px", borderBottom: `1px solid ${C.border}`, display: "flex", gap: 8, flexShrink: 0, alignItems: "center" }}>
+        
+        {/* Persistent Mode Switch Indicator Button */}
+        <button
+          type="button"
+          onClick={() => setActiveMode((p) => p === "barcode" ? "search" : "barcode")}
+          title="Toggle selection method (F2)"
+          style={{ height: 34, padding: "0 10px", borderRadius: 8, border: `1px solid ${C.border}`, background: activeMode === "search" ? C.accent : C.surface, color: activeMode === "search" ? "#fff" : C.text2, display: "flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 600, cursor: "pointer", outline: "none" }}
+        >
+          {activeMode === "search" ? <IconSearch size={14} /> : <IconBarcode size={14} />}
+          <span>SEARCH (F2)</span>
+        </button>
+
+        {activeMode === "search" ? (
+          <div style={{ flex: 1, position: "relative" }}>
+            <IconSearch size={15} stroke={1.75} style={{ position: "absolute", left: 9, top: "50%", transform: "translateY(-50%)", color: C.text3 }} />
+            <input
+              ref={searchInputRef}
+              placeholder="Type product name or reference code…"
+              value={search}
+              onChange={async (e) => {
+                setSearch(e.target.value);
+                await loadProducts(true);
+              }}
+              style={{ width: "100%", height: 34, borderRadius: 8, border: `1px solid ${C.border}`, paddingLeft: 28, paddingRight: 10, fontSize: 12, fontFamily: "inherit", outline: "none", background: C.surface }}
+            />
+          </div>
+        ) : (
+          <div 
+            onClick={() => setActiveMode("search")}
+            style={{ flex: 1, height: 34, borderRadius: 8, border: `1.5px dashed ${C.border}`, background: C.card, display: "flex", alignItems: "center", paddingLeft: 12, fontSize: 12, color: C.text3, cursor: "pointer" }}
+          >
+            <span>Scanner active... click here or press <b style={{ color: C.text1 }}>F2</b> for keyword typing</span>
+          </div>
+        )}
+
         <select
           value={categoryFilter}
           onChange={async (e) => {
             setCategoryFilter(e.target.value);
-            await loadProducts(true); // 👈 Re-run fetch from Page 1 with new category constraint
+            await loadProducts(true);
           }}
           disabled={productsLoading}
           style={{ height: 34, borderRadius: 8, border: `1px solid ${C.border}`, padding: "0 10px", fontSize: 12, fontFamily: "inherit", background: C.surface, color: C.text1, cursor: "pointer", outline: "none", opacity: productsLoading ? 0.5 : 1 }}
@@ -114,7 +145,6 @@ export default function ProductGrid() {
           alignContent: "start",
         }}
       >
-        {/* Loading skeleton */}
         {productsLoading && products.length === 0 && (
           Array.from({ length: 12 }).map((_, i) => (
             <div
@@ -129,11 +159,10 @@ export default function ProductGrid() {
           ))
         )}
 
-        {/* Error state */}
         {productsError && products.length === 0 && (
           <div style={{ gridColumn: "1/-1", textAlign: "center", padding: "40px 0", color: C.text3 }}>
             <IconAlertCircle size={36} stroke={1} style={{ display: "block", margin: "0 auto 10px", color: C.danger, opacity: 0.7 }} />
-            <div style={{ fontSize: 13, color: C.danger, marginBottom: 6 }}>Failed to load products</div>
+            <div style={{ fontSize: 13, color: C.danger, Typography: 6 }}>Failed to load products</div>
             <div style={{ fontSize: 11, color: C.text3, marginBottom: 14 }}>{productsError}</div>
             <button
               onClick={() => loadAll()}
@@ -144,12 +173,10 @@ export default function ProductGrid() {
           </div>
         )}
 
-        {/* Product cards */}
         {products.map((p) => (
           <ProductCard key={p.id} product={p} />
         ))}
 
-        {/* Empty state */}
         {!productsLoading && !productsError && products.length === 0 && (
           <div style={{ gridColumn: "1/-1", textAlign: "center", padding: "40px 0", color: C.text3 }}>
             <IconPackage size={40} stroke={1} style={{ display: "block", margin: "0 auto 10px" }} />
@@ -169,7 +196,6 @@ export default function ProductGrid() {
           </div>
         )}
 
-        {/* Infinite scroll sentinel + loader */}
         {hasMore && (
           <div ref={sentinelRef} style={{ height: 40, gridColumn: "1/-1", display: "flex", alignItems: "center", justifyContent: "center" }}>
             {productsLoading && (
