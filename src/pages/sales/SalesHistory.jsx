@@ -439,8 +439,8 @@ export default function SalesHistory() {
                     <span className="font-medium" style={{ color: C.text1 }}>{selectedSale.cashier_name || "System"}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span style={{ color: C.text3 }}>Session Sequence:</span>
-                    <span className="font-medium" style={{ color: C.text1 }}>#{selectedSale.session_id}</span>
+                    <span style={{ color: C.text3 }}>Season Sequence:</span>
+                    <span className="font-medium" style={{ color: C.text1 }}>#{selectedSale.season_id}</span>
                   </div>
                   <div className="flex justify-between">
                     <span style={{ color: C.text3 }}>Timestamp:</span>

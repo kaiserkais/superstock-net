@@ -10,7 +10,7 @@ use crate::AppState;
 
 #[derive(Debug, Deserialize)]
 pub struct SalesFilter {
-    pub session_id: Option<i64>,
+    pub season_id: Option<i64>,
     pub user_id: Option<String>,
     pub customer_id: Option<String>,
     pub status: Option<String>,
@@ -27,7 +27,7 @@ pub struct SaleSummary {
     pub id: String,
     pub user_id: String,
     pub cashier_name: Option<String>,
-    pub session_id: i64,
+    pub season_id: i64,
     pub customer_id: Option<String>,
     pub customer_name: Option<String>,
     pub subtotal: f64,
@@ -86,8 +86,8 @@ pub async fn get_sales(
         "SELECT COUNT(*) FROM sales s WHERE 1=1 "
     );
     
-    if let Some(session) = filter.session_id {
-        count_builder.push(" AND s.session_id = ").push_bind(session);
+    if let Some(season) = filter.season_id {
+        count_builder.push(" AND s.season_id = ").push_bind(season);
     }
     if let Some(ref user) = filter.user_id {
         count_builder.push(" AND s.user_id = ").push_bind(user);
@@ -125,7 +125,7 @@ pub async fn get_sales(
     // 3. BUILD DATA FETCH QUERY
     let mut data_builder: QueryBuilder<'_, Sqlite> = QueryBuilder::new(
         "SELECT 
-            s.id, s.user_id, u.username as cashier_name, s.session_id, 
+            s.id, s.user_id, u.username as cashier_name, s.season_id, 
             s.customer_id, c.name as customer_name, s.subtotal, 
             s.adj_type, s.adj_value, s.total, s.status, s.created_at
          FROM sales s
@@ -134,8 +134,8 @@ pub async fn get_sales(
          WHERE 1=1 "
     );
 
-    if let Some(session) = filter.session_id {
-        data_builder.push(" AND s.session_id = ").push_bind(session);
+    if let Some(season) = filter.season_id {
+        data_builder.push(" AND s.season_id = ").push_bind(season);
     }
     if let Some(ref user) = filter.user_id {
         data_builder.push(" AND s.user_id = ").push_bind(user);
@@ -184,7 +184,7 @@ pub async fn get_sale(
 ) -> Result<Json<SaleFullDetails>, (StatusCode, String)> {
     let summary = sqlx::query_as::<_, SaleSummary>(
         "SELECT 
-            s.id, s.user_id, u.username as cashier_name, s.session_id, 
+            s.id, s.user_id, u.username as cashier_name, s.season_id, 
             s.customer_id, c.name as customer_name, s.subtotal, 
             s.adj_type, s.adj_value, s.total, s.status, s.created_at
          FROM sales s

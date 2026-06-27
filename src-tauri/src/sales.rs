@@ -29,7 +29,7 @@ pub struct SaleItemOut {
 pub struct SaleOut {
     pub id:          String,
     pub user_id:     String,
-    pub session_id:  i64,
+    pub season_id:  i64,
     pub customer_id: Option<String>,
     pub subtotal:    f64,
     pub adj_type:    String,
@@ -58,7 +58,7 @@ pub struct SaleItemInput {
 #[derive(serde::Deserialize)]
 pub struct CreateSaleInput {
     pub user_id:     String,         // Authenticated cashier ID
-    pub session_id:  Option<i64>,    // Defaults to 1 if not provided
+    pub season_id:  Option<i64>,    // Defaults to 1 if not provided
     pub customer_id: Option<String>, // NULL = anonymous walk-in
     pub subtotal:    f64,
     pub adj_type:    Option<String>, // "discount" | "surcharge" | "none"
@@ -69,7 +69,7 @@ pub struct CreateSaleInput {
 
 #[derive(serde::Deserialize)]
 pub struct SaleListQuery {
-    pub session_id:  Option<i64>,
+    pub season_id:  Option<i64>,
     pub user_id:     Option<String>,
     pub customer_id: Option<String>,
     pub status:      Option<String>,
@@ -95,7 +95,7 @@ pub async fn create_sale(
     }
 
     // Normalise optional fields
-    let session_id = payload.session_id.unwrap_or(1);
+    let season_id = payload.season_id.unwrap_or(1);
     let adj_type   = payload.adj_type.clone().unwrap_or_else(|| "none".to_string());
     let adj_value  = payload.adj_value.unwrap_or(0.0);
 
@@ -124,13 +124,13 @@ pub async fn create_sale(
     // ── Insert sale header ────────────────────────────────────────────────────
     let header_result = sqlx::query(
         "INSERT INTO sales
-             (id, user_id, session_id, customer_id,
+             (id, user_id, season_id, customer_id,
               subtotal, adj_type, adj_value, total, status)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'completed')"
     )
     .bind(&sale_id)
     .bind(&payload.user_id)
-    .bind(session_id)
+    .bind(season_id)
     .bind(&payload.customer_id)
     .bind(payload.subtotal)
     .bind(&adj_type)
@@ -225,7 +225,7 @@ pub async fn create_sale(
         .into_response()
 }
 
-/// GET /api/sales — List sales with optional filters (session, user, customer, status)
+/// GET /api/sales — List sales with optional filters (season, user, customer, status)
 pub async fn get_sales(
     State(state): State<Arc<AppState>>,
     Query(params): Query<SaleListQuery>,
@@ -236,7 +236,7 @@ pub async fn get_sales(
 
     // ── Build dynamic WHERE clause ────────────────────────────────────────────
     let mut conditions: Vec<&str> = Vec::new();
-    if params.session_id.is_some()  { conditions.push("session_id = ?");  }
+    if params.season_id.is_some()  { conditions.push("season_id = ?");  }
     if params.user_id.is_some()     { conditions.push("user_id = ?");     }
     if params.customer_id.is_some() { conditions.push("customer_id = ?"); }
     if params.status.is_some()      { conditions.push("status = ?");      }
@@ -248,7 +248,7 @@ pub async fn get_sales(
     };
 
     let sales_query = format!(
-        "SELECT id, user_id, session_id, customer_id,
+        "SELECT id, user_id, season_id, customer_id,
                 subtotal, adj_type, adj_value, total, status,
                 created_at
          FROM sales
@@ -258,7 +258,7 @@ pub async fn get_sales(
 
     // ── Build query with dynamic bindings ─────────────────────────────────────
     let mut q = sqlx::query(&sales_query);
-    if let Some(v) = params.session_id  { q = q.bind(v); }
+    if let Some(v) = params.season_id  { q = q.bind(v); }
     if let Some(v) = &params.user_id    { q = q.bind(v); }
     if let Some(v) = &params.customer_id{ q = q.bind(v); }
     if let Some(v) = &params.status     { q = q.bind(v); }
@@ -329,7 +329,7 @@ pub async fn get_sales(
         sales.push(SaleOut {
             id:          s_id,
             user_id:     s_row.get("user_id"),
-            session_id:  s_row.get("session_id"),
+            season_id:  s_row.get("season_id"),
             customer_id: s_row.get("customer_id"),
             subtotal:    s_row.get("subtotal"),
             adj_type:    s_row.get("adj_type"),
@@ -351,7 +351,7 @@ pub async fn get_sale(
 ) -> impl IntoResponse {
 
     let sale_row = match sqlx::query(
-        "SELECT id, user_id, session_id, customer_id,
+        "SELECT id, user_id, season_id, customer_id,
                 subtotal, adj_type, adj_value, total, status, created_at
          FROM sales WHERE id = ?"
     )
@@ -404,7 +404,7 @@ pub async fn get_sale(
     let sale = SaleOut {
         id:          sale_row.get("id"),
         user_id:     sale_row.get("user_id"),
-        session_id:  sale_row.get("session_id"),
+        season_id:  sale_row.get("season_id"),
         customer_id: sale_row.get("customer_id"),
         subtotal:    sale_row.get("subtotal"),
         adj_type:    sale_row.get("adj_type"),

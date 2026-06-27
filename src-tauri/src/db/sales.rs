@@ -6,7 +6,7 @@ pub async fn create_schema(pool: &SqlitePool) -> Result<(), sqlx::Error> {
         "CREATE TABLE IF NOT EXISTS sales (
             id          TEXT    PRIMARY KEY,
             user_id     TEXT    NOT NULL,
-            session_id  INTEGER NOT NULL DEFAULT 1,
+            season_id  INTEGER NOT NULL DEFAULT 1,
             customer_id TEXT,
             subtotal    REAL    NOT NULL DEFAULT 0.0,
             adj_type    TEXT    NOT NULL DEFAULT 'none' CHECK(adj_type IN ('discount', 'surcharge', 'none')),
@@ -46,7 +46,7 @@ pub async fn create_schema(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     .await?;
 
     // ── Indexes ───────────────────────────────────────────────────────────────
-    sqlx::query("CREATE INDEX IF NOT EXISTS idx_sales_session     ON sales(session_id);").execute(pool).await?;
+    sqlx::query("CREATE INDEX IF NOT EXISTS idx_sales_season     ON sales(season_id);").execute(pool).await?;
     sqlx::query("CREATE INDEX IF NOT EXISTS idx_sales_user        ON sales(user_id);").execute(pool).await?;
     sqlx::query("CREATE INDEX IF NOT EXISTS idx_sales_customer    ON sales(customer_id);").execute(pool).await?;
     sqlx::query("CREATE INDEX IF NOT EXISTS idx_sales_created_at  ON sales(created_at);").execute(pool).await?;

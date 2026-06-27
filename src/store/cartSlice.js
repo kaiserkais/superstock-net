@@ -303,7 +303,7 @@ export const createCartSlice = (set, get) => ({
 
     const payload = {
       user_id: userId,
-      session_id: 1, 
+      season_id: 1, 
       customer_id: cartClient?.id ?? null,
       subtotal: Number(subtotal.toFixed(2)),
       adj_type: adjustmentValue > 0 ? adjustmentType : "none",
