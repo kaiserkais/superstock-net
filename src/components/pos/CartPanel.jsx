@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect } from "react";
 import {
   IconUser, IconChevronRight, IconShoppingCart,
   IconEdit, IconCash, IconPlayerPause, IconTrash,
@@ -11,16 +11,72 @@ import CartItemRow from "./CartItemRow";
 import Btn from "./ui/Btn";
 
 export default function CartPanel({
-  onExecuteSale, onPark, onClear, onPrintInvoice, onPrintReceipt,saleLoading = false
+  onExecuteSale, onPark, onClear, onPrintInvoice, onPrintReceipt, saleLoading = false
 }) {
+  // ── Pull state variables & navigation actions from store ─────────────────
   const {
     cartItems, cartClient,
     openClientModal, openTotalEditModal,
     getCartTotals,
+    selectedIndex, selectNextItem, selectPrevItem, incrementSelectedItem, decrementSelectedItem
   } = usePosStore();
 
   const { subtotal, adjustmentType, adjustmentValue, hasAdjustment, total } = getCartTotals();
   const isEmpty = cartItems.length === 0;
+
+  // ── Keyboard interception for selecting & managing items ─────────────────
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (cartItems.length === 0) return;
+
+      // Ensure shortcut triggers don't disrupt regular text input workflows
+      const activeEl = document.activeElement;
+      if (activeEl) {
+        const tagName = activeEl.tagName;
+        if (tagName === "INPUT" || tagName === "TEXTAREA" || tagName === "SELECT") {
+          
+          // Check if the current focused element is the primary barcode scan zone
+          const isBarcodeField = 
+            activeEl.id === "barcode-input" ||
+            activeEl.name === "barcode" ||
+            activeEl.hasAttribute("data-barcode") ||
+            activeEl.placeholder?.toLowerCase().includes("barcode") ||
+            activeEl.placeholder?.toLowerCase().includes("scan");
+
+          if (!isBarcodeField) return; // Halt intercept if editing pricing or customer profiles
+        }
+      }
+
+      switch (e.key) {
+        case "ArrowDown":
+          e.preventDefault();
+          selectNextItem();
+          break;
+
+        case "ArrowUp":
+          e.preventDefault();
+          selectPrevItem();
+          break;
+
+        case "+":
+        case "=":
+          e.preventDefault();
+          incrementSelectedItem();
+          break;
+
+        case "-":
+          e.preventDefault();
+          decrementSelectedItem();
+          break;
+
+        default:
+          break;
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [cartItems, selectNextItem, selectPrevItem, incrementSelectedItem, decrementSelectedItem]);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
@@ -66,7 +122,13 @@ export default function CartPanel({
             </div>
           </div>
         ) : (
-          cartItems.map((item) => <CartItemRow key={item.cartId} item={item} />)
+          cartItems.map((item, index) => (
+            <CartItemRow 
+              key={item.cartId} 
+              item={item} 
+              isSelected={index === selectedIndex} // 👈 pass selection state down for styling rules
+            />
+          ))
         )}
       </div>
 
@@ -135,20 +197,19 @@ export default function CartPanel({
           }}
         >
           {
-          saleLoading ? (
-            <>
-            <IconLoader size={17} stroke={2} style={{animation: 'spin 1s Linear infinit'}}/>
-            proccessing ...
-            </>
-          ) : (
-            <>
-            <IconCash size={18} stroke={2} />
-          Execute sale
-          <span style={{ fontSize: 10, opacity: 0.75, marginLeft: 2 }}>F5</span>
-            </>
-          ) 
-        }
-          
+            saleLoading ? (
+              <>
+                <IconLoader size={17} stroke={2} style={{ animation: 'spin 1s linear infinite' }} />
+                Processing...
+              </>
+            ) : (
+              <>
+                <IconCash size={18} stroke={2} />
+                Execute sale
+                <span style={{ fontSize: 10, opacity: 0.75, marginLeft: 2 }}>F5</span>
+              </>
+            )
+          }
         </button>
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>

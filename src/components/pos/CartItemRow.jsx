@@ -3,7 +3,7 @@ import { IconEdit, IconMinus, IconPlus, IconTrash } from "@tabler/icons-react";
 import usePosStore from "../../store/usePosStore";
 import { C, fmt } from "./posTheme";
 
-export default function CartItemRow({ item }) {
+export default function CartItemRow({ item, isSelected }) {
   const { products, updateQty, removeCartItem, openWeightEditModal } = usePosStore();
 
   // Guard: product may not be in the loaded catalog yet (e.g. store still loading)
@@ -23,10 +23,21 @@ export default function CartItemRow({ item }) {
   };
 
   return (
-    <div style={{
-      display: "flex", alignItems: "flex-start", gap: 8, padding: "9px 0",
-      borderBottom: `1px solid ${C.border}`,
-    }}>
+    <div 
+      style={{
+        display: "flex", 
+        alignItems: "flex-start", 
+        gap: 8, 
+        padding: "9px 8px 9px 5px", // Extra padding definitions to leave breathing room for selection indicators
+        marginLeft: "-8px", 
+        marginRight: "-8px",
+        borderRadius: 6,
+        background: isSelected ? `${C.accent}0D` : "transparent", // Subtle accent highlight on track index
+        borderLeft: isSelected ? `3px solid ${C.accent}` : "3px solid transparent", // Clear left edge visual anchor
+        borderBottom: `1px solid ${isSelected ? "transparent" : C.border}`, // Conceals line divider when highlighted
+        transition: "all 0.12s ease-in-out",
+      }}
+    >
 
       {/* ── Name + price-per-unit ──────────────────────────────────────── */}
       <div style={{ flex: 1, minWidth: 0 }}>
