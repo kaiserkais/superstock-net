@@ -151,7 +151,7 @@ function Sidebar({ open, activeLabel, onSelect }) {
 
             {/* Footer */}
             <div className="mt-auto w-full">
-                <NavItem Icon={IconSettings} label="Settings" open={open} active={activeLabel === "Settings"} onSelect={onSelect} />
+                <NavItem Icon={IconSettings} label="Settings" open={open} active={activeLabel === "Settings"} to='/settings' onSelect={onSelect} />
             </div>
         </nav>
     );

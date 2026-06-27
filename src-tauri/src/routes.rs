@@ -9,7 +9,7 @@ use tower_http::services::ServeDir;
 
 use crate::{
     AppState, auth, categories, customers, handlers, 
-    products, sales, staff, suppliers, sales_history, // 👈 Registered sales_history here
+    products, sales, staff, suppliers, sales_history, settings // 👈 1. Added settings sub-module registration here
 };
 
 /// Helper function to resolve the native platform image directory used by DB storage
@@ -32,12 +32,10 @@ pub fn create_router(shared_state: Arc<AppState>) -> Router {
 
         // ── Products Catalog ───────────────────────────────────────────────────
         .route("/api/products",
-            
             get(products::get_products)
             .post(products::create_product)
         )
-        .route("/api/products/:id",get(products::get_product)
-        
+        .route("/api/products/:id", get(products::get_product)
             .put(products::edit_product)
             .delete(products::delete_product)
         )
@@ -82,16 +80,19 @@ pub fn create_router(shared_state: Arc<AppState>) -> Router {
         )
 
         // ── Sales & History Registry ──────────────────────────────────────────
-        // POST   /api/sales          → commit a completed cart (original checkout module)
-        // GET    /api/sales          → list sales (filterable by session/user/customer/status)
-        // GET    /api/sales/:id      → fetch a single sale with line items
-        // PATCH  /api/sales/:id/void → mark a sale as voided (with stock auto-replenishment)
         .route("/api/sales",
             post(sales::create_sale)
-            .get(sales_history::get_sales) // 👈 Swapped to use sales_history logic
+            .get(sales_history::get_sales)
         )
-        .route("/api/sales/:id",       get(sales_history::get_sale))  // 👈 Swapped
-        .route("/api/sales/:id/void",  patch(sales_history::void_sale)) // 👈 Swapped
+        .route("/api/sales/:id",       get(sales_history::get_sale))
+        .route("/api/sales/:id/void",  patch(sales_history::void_sale))
+
+        // ── Global System Settings ────────────────────────────────────────────
+        // 👈 2. Registered new system settings configurations endpoint here
+        .route("/api/settings",
+            get(settings::get_settings)
+            .put(settings::update_settings)
+        )
 
         // ── Static Assets ─────────────────────────────────────────────────────
         .nest_service("/images", ServeDir::new(get_system_image_dir()))

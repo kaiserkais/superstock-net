@@ -13,6 +13,7 @@ import EditProduct from '../pages/Products/EditProduct';
 import CategoriesPage from '../pages/Categories/Categories';
 import PosPage from '../pages/PosPage';
 import SalesHistory from '../pages/sales/SalesHistory';
+import Settings from '../pages/Settings/Settings';
 
 // --- ROUTE SAFEGUARDS ---
 
@@ -94,6 +95,11 @@ const router = createHashRouter([
       {
         path: "history",
         element: <SalesHistory />,
+      }
+      ,
+      {
+        path: "settings",
+        element: <Settings />,
       }
     ],
   },

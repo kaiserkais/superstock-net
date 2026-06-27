@@ -9,6 +9,7 @@ mod products;
 mod categories;
 mod sales;
 mod sales_history;
+mod settings;
 
 use std::net::SocketAddr;
 use mdns_sd::{ServiceDaemon, ServiceInfo, ServiceEvent};
@@ -134,6 +135,8 @@ async fn discover_host() -> Result<String, String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_thermal_printer::init())
+
         .invoke_handler(tauri::generate_handler![discover_host, get_app_mode, set_app_mode])
         .setup(|app| {
             let app_dir = app.path().app_data_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
