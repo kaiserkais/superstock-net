@@ -90,7 +90,7 @@ pub async fn update_settings(
     Json(payload): Json<SettingsPayload>,
 ) -> impl IntoResponse {
     // 1. Runtime validation layer to match DB structural CHECK constraints safely
-    if !["58mm", "80mm"].contains(&payload.receipt_paper_size.as_str()) {
+    if !["Mm58", "Mm80"].contains(&payload.receipt_paper_size.as_str()) {
         return (StatusCode::BAD_REQUEST, "Invalid selection variant for receipt paper size").into_response();
     }
     if !["A4", "A5"].contains(&payload.invoice_paper_size.as_str()) {

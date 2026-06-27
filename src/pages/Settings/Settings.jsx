@@ -194,8 +194,8 @@ export default function Settings() {
                   onChange={handleChange}
                   className="w-full px-3 py-2 border border-gray-300 bg-white rounded-md text-sm"
                 >
-                  <option value="58mm">58mm Variant Roll</option>
-                  <option value="80mm">80mm Standard Roll</option>
+                  <option value="Mm58">58mm Variant Roll</option>
+                  <option value="Mm80">80mm Standard Roll</option>
                 </select>
               </div>
             </div>

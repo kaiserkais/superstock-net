@@ -1,6 +1,7 @@
 use sqlx::SqlitePool;
 
 pub async fn create_schema(pool: &SqlitePool) -> Result<(), sqlx::Error> {
+
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS settings (
             -- Enforces a single row in the database (id must always be 1)
@@ -11,7 +12,7 @@ pub async fn create_schema(pool: &SqlitePool) -> Result<(), sqlx::Error> {
             
             -- Receipt Printer Configurations
             receipt_printer_name        TEXT,
-            receipt_paper_size          TEXT NOT NULL CHECK(receipt_paper_size IN ('58mm', '80mm')),
+            receipt_paper_size          TEXT NOT NULL CHECK(receipt_paper_size IN ('Mm58', 'Mm80')),
             
             -- Invoice Printer Configurations
             invoice_printer_name        TEXT,
@@ -51,7 +52,7 @@ pub async fn seed_data(pool: &SqlitePool) -> Result<(), sqlx::Error> {
                 print_receipt_on_sale, tax_percentage, balance_prefix, automatic_backup
              ) VALUES (
                 1, ?, ?, ?,
-                NULL, '80mm',
+                NULL, 'Mm80',
                 NULL, 'A4',
                 NULL, '40mm x 20mm',
                 1, 0.0, '21', 1

@@ -6,7 +6,7 @@ export const useSettingsStore = create((set, get) => ({
     welcome_message: '',
     thank_you_message: '',
     receipt_printer_name: '',
-    receipt_paper_size: '80mm',
+    receipt_paper_size: 'Mm80',
     invoice_printer_name: '',
     invoice_paper_size: 'A4',
     barcode_printer_name: '',

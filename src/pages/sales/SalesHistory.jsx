@@ -10,13 +10,18 @@ import {
   IconCash, 
   IconShoppingBag,
   IconCheck,
-  IconAlertCircle
+  IconAlertCircle,
+  IconPrinter // 🌟 Added printer icon support
 } from "@tabler/icons-react";
 import { C, fmt } from "../../components/pos/posTheme"; 
 import Pagination from "../../components/ui/Pagination";
 
+// 🌟 Import global settings store context links & printer logic repository
+import { useSettingsStore } from "../../store/useSettingsStore";
+import { printRepository } from "../../services/printRepository";
+
 const API_BASE = "http://localhost:8080";
-const ITEMS_PER_PAGE = 20; // 👈 Configure row capacity bounds per slice sequence
+const ITEMS_PER_PAGE = 20;
 
 export default function SalesHistory() {
   // --- State Management ---
@@ -31,14 +36,21 @@ export default function SalesHistory() {
   const [statusFilter, setStatusFilter] = useState("all");
 
   // --- Pagination State ---
-  const [currentPage, setCurrentPage] = useState(1); // 👈 Controls active pagination view index
+  const [currentPage, setCurrentPage] = useState(1);
 
   // --- Active Selection State (Master-Detail Pane) ---
   const [selectedSale, setSelectedSale] = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [saleDetails, setSaleDetails] = useState(null);
+  
+  // 🌟 Action Feedback Loading Indicator States
+  const [isPrinting, setIsPrinting] = useState(false);
 
-  // --- Fetch Sales Headers on Mount ---
+  // 🌟 Pull global state configurations directly from your Zustand container
+  const settings = useSettingsStore((state) => state.settings);
+  const fetchSettings = useSettingsStore((state) => state.fetchSettings);
+
+  // --- Fetch Sales Headers & Settings on Mount ---
   const fetchSales = async () => {
     setLoading(true);
     try {
@@ -55,10 +67,10 @@ export default function SalesHistory() {
 
   useEffect(() => {
     fetchSales();
-  }, []);
+    fetchSettings(); // Ensure localized settings memory matches system parameters on boot load
+  }, [fetchSettings]);
 
-  // ─── RESET TO PAGE 1 ON FILTER MUTATIONS ───────────────────────────────────
-  // Whenever users search or click dropdowns, reset page indices to prevent empty overflow states
+  // Reset page index on filter mutations
   useEffect(() => {
     setCurrentPage(1);
   }, [searchId, startDate, endDate, statusFilter]);
@@ -75,6 +87,20 @@ export default function SalesHistory() {
       console.error("Error fetching invoice details:", err);
     } finally {
       setDetailLoading(false);
+    }
+  };
+
+  // 🌟 Handle Receipt Print Spool Routine
+  const handlePrintReceipt = async () => {
+    if (!saleDetails) return;
+    setIsPrinting(true);
+    try {
+      // Map combined properties explicitly down to the core service repository layers
+      await printRepository.printInvoiceReceipt(saleDetails, settings);
+    } catch (err) {
+      alert(err.message || "Failed to trigger spool automation routing maps.");
+    } finally {
+      setIsPrinting(false);
     }
   };
 
@@ -121,13 +147,10 @@ export default function SalesHistory() {
     return matchesId && matchesStatus && matchesDate;
   });
 
-  // ─── CALCULATE INTERIOR SLICING BOUNDS FOR CURRENT PAGE ─────────────────────
   const totalPages = Math.ceil(filteredSales.length / ITEMS_PER_PAGE);
   const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
   const displayedSales = filteredSales.slice(startIndex, startIndex + ITEMS_PER_PAGE);
 
-  // --- Live Reactive Metric Aggregations (KPIs) ---
-  // Financial parameters remain calculated from full filter sets (independent of page cuts)
   const stats = filteredSales.reduce((acc, sale) => {
     if (sale.status !== "voided") {
       acc.revenue += sale.total;
@@ -250,7 +273,6 @@ export default function SalesHistory() {
           ) : filteredSales.length === 0 ? (
             <div style={{ padding: 40, textAlign: "center", color: C.text3, fontSize: 13 }}>No matching transaction receipts found.</div>
           ) : (
-            // Flex box wrapping both table body space and footer components neatly
             <>
               <div style={{ flex: 1, overflowY: "auto" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left", fontSize: 13 }}>
@@ -264,7 +286,6 @@ export default function SalesHistory() {
                     </tr>
                   </thead>
                   <tbody>
-                    {/* 👇 Changed maps from filteredSales to display only displayedSales items */}
                     {displayedSales.map((sale) => {
                       const isSelected = selectedSale?.id === sale.id;
                       const isVoided = sale.status === "voided";
@@ -314,8 +335,6 @@ export default function SalesHistory() {
                 </table>
               </div>
 
-              {/* ─── PAGINATION BOTTOM CONTROL BAR ─── */}
-              {/* 👇 Render the reusable layout component directly inside the master panel card layout bounds */}
               <Pagination 
                 currentPage={currentPage}
                 totalPages={totalPages}
@@ -402,7 +421,35 @@ export default function SalesHistory() {
                 </div>
               </div>
 
-              <div style={{ padding: 16, borderTop: `1px solid ${C.border}`, background: C.bg }}>
+              {/* 🌟 ACTION BAR ACTIONS INTERFACE TRACK */}
+              <div style={{ padding: 16, borderTop: `1px solid ${C.border}`, background: C.bg, display: "flex", flexDirection: "column", gap: 10 }}>
+                
+                {/* 🌟 ADDED: Dynamic Receipt Spool Print Action Button Trigger */}
+                <button
+                  onClick={handlePrintReceipt}
+                  disabled={isPrinting || !saleDetails}
+                  style={{
+                    width: "100%",
+                    height: 40,
+                    background: "#2563EB",
+                    color: "#FFFFFF",
+                    border: "none",
+                    borderRadius: 8,
+                    fontSize: 13,
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 8,
+                    opacity: (isPrinting || !saleDetails) ? 0.6 : 1,
+                    boxShadow: "0 1px 2px rgba(37, 99, 235, 0.2)"
+                  }}
+                >
+                  <IconPrinter size={16} />
+                  {isPrinting ? "Spooling Layout Data..." : "Print Thermal Receipt"}
+                </button>
+
                 {selectedSale.status === "voided" ? (
                   <div style={{ display: "flex", alignItems: "center", gap: 8, color: "#EF4444", justifyContent: "center", fontSize: 13, fontWeight: 500, background: "#FEE2E2", padding: "10px", borderRadius: 8 }}>
                     <IconAlertCircle size={16} />
