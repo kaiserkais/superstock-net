@@ -45,6 +45,7 @@ export default function SalesHistory() {
   
   // Action Feedback Loading Indicator States
   const [isPrinting, setIsPrinting] = useState(false);
+  const [isPrintingInvoice, setIsPrintingInvoice] = useState(false);
 
   // Pull global state configurations directly from your Zustand container
   const settings = useSettingsStore((state) => state.settings);
@@ -67,7 +68,7 @@ export default function SalesHistory() {
 
   useEffect(() => {
     fetchSales();
-    fetchSettings(); // Ensure localized settings memory matches system parameters on boot load
+    fetchSettings();
   }, [fetchSettings]);
 
   // Reset page index on filter mutations
@@ -90,19 +91,22 @@ export default function SalesHistory() {
     }
   };
 
-  // 🌟 FIX: Combined Payload Mapper Spool Engine
+  // 🌟 Routine A: Thermal Receipt Hardware Pipeline 
   const handlePrintReceipt = async () => {
     if (!saleDetails || !selectedSale) return;
     setIsPrinting(true);
     try {
-      // Combines the parent metadata (customer/cashier info) with the deep nested cart items
+      // Explicit check to safely pass discount metrics to the invoice print engine
+      const discountAmount = saleDetails.adj_type === "discount" ? Number(saleDetails.adj_value) || 0 : 0;
+
       const combinedSalePayload = {
         ...selectedSale,
         ...saleDetails,
+        discount: discountAmount, // 🌟 Explicit discount calculation field mapping
         items: saleDetails.items.map((item) => ({
           product_name: item.product_name || "Item",
           qty: Number(item.qty) || 1,
-          unit_price: Number(item.unit_price) || 0, // Maps cleanly to your printRepository setup
+          unit_price: Number(item.unit_price) || 0, 
           line_total: Number(item.line_total) || 0,
         })),
       };
@@ -112,6 +116,34 @@ export default function SalesHistory() {
       alert(err.message || "Failed to trigger spool automation routing maps.");
     } finally {
       setIsPrinting(false);
+    }
+  };
+
+  // 🌟 Routine B: Standard Invoice Layout Document Pipeline (A4/Letter)
+  const handlePrintFullInvoice = async () => {
+    if (!saleDetails || !selectedSale) return;
+    setIsPrintingInvoice(true);
+    try {
+      // Explicit check to safely pass discount metrics to the invoice print engine
+      const discountAmount = saleDetails.adj_type === "discount" ? Number(saleDetails.adj_value) || 0 : 0;
+
+      const combinedSalePayload = {
+        ...selectedSale,
+        ...saleDetails,
+        discount: discountAmount, // 🌟 Explicit discount calculation field mapping
+        items: saleDetails.items.map((item) => ({
+          product_name: item.product_name || "Item",
+          qty: Number(item.qty) || 1,
+          unit_price: Number(item.unit_price) || 0,
+          line_total: Number(item.line_total) || 0,
+        })),
+      };
+
+      await printRepository.printInvoice(combinedSalePayload, settings);
+    } catch (err) {
+      alert(err.message || "Failed to compile document sheet blueprint.");
+    } finally {
+      setIsPrintingInvoice(false);
     }
   };
 
@@ -435,30 +467,61 @@ export default function SalesHistory() {
               {/* ACTION BAR ACTIONS INTERFACE TRACK */}
               <div style={{ padding: 16, borderTop: `1px solid ${C.border}`, background: C.bg, display: "flex", flexDirection: "column", gap: 10 }}>
                 
-                <button
-                  onClick={handlePrintReceipt}
-                  disabled={isPrinting || !saleDetails}
-                  style={{
-                    width: "100%",
-                    height: 40,
-                    background: "#2563EB",
-                    color: "#FFFFFF",
-                    border: "none",
-                    borderRadius: 8,
-                    fontSize: 13,
-                    fontWeight: 600,
-                    cursor: "pointer",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    gap: 8,
-                    opacity: (isPrinting || !saleDetails) ? 0.6 : 1,
-                    boxShadow: "0 1px 2px rgba(37, 99, 235, 0.2)"
-                  }}
-                >
-                  <IconPrinter size={16} />
-                  {isPrinting ? "Spooling Layout Data..." : "Print Thermal Receipt"}
-                </button>
+                <div style={{ display: "flex", gap: 10, width: "100%" }}>
+                  
+                  {/* Thermal Ticket Printer Trigger */}
+                  <button
+                    onClick={handlePrintReceipt}
+                    disabled={isPrinting || isPrintingInvoice || !saleDetails}
+                    style={{
+                      flex: 1,
+                      height: 40,
+                      background: "#2563EB",
+                      color: "#FFFFFF",
+                      border: "none",
+                      borderRadius: 8,
+                      fontSize: 12,
+                      fontWeight: 600,
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: 6,
+                      opacity: (isPrinting || isPrintingInvoice || !saleDetails) ? 0.6 : 1,
+                      boxShadow: "0 1px 2px rgba(37, 99, 235, 0.2)"
+                    }}
+                  >
+                    <IconPrinter size={15} />
+                    {isPrinting ? "Spooling..." : "Thermal Ticket"}
+                  </button>
+
+                  {/* Document/A4 System Printer Trigger */}
+                  <button
+                    onClick={handlePrintFullInvoice}
+                    disabled={isPrinting || isPrintingInvoice || !saleDetails}
+                    style={{
+                      flex: 1,
+                      height: 40,
+                      background: "#1E293B", 
+                      color: "#FFFFFF",
+                      border: "none",
+                      borderRadius: 8,
+                      fontSize: 12,
+                      fontWeight: 600,
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: 6,
+                      opacity: (isPrinting || isPrintingInvoice || !saleDetails) ? 0.6 : 1,
+                      boxShadow: "0 1px 2px rgba(30, 41, 59, 0.2)"
+                    }}
+                  >
+                    <IconReceipt size={15} />
+                    {isPrintingInvoice ? "Compiling..." : "Full Invoice"}
+                  </button>
+                  
+                </div>
 
                 {selectedSale.status === "voided" ? (
                   <div style={{ display: "flex", alignItems: "center", gap: 8, color: "#EF4444", justifyContent: "center", fontSize: 13, fontWeight: 500, background: "#FEE2E2", padding: "10px", borderRadius: 8 }}>
