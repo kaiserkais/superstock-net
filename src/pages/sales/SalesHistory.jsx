@@ -11,17 +11,17 @@ import {
   IconShoppingBag,
   IconCheck,
   IconAlertCircle,
-  IconPrinter // 🌟 Added printer icon support
+  IconPrinter 
 } from "@tabler/icons-react";
 import { C, fmt } from "../../components/pos/posTheme"; 
 import Pagination from "../../components/ui/Pagination";
 
-// 🌟 Import global settings store context links & printer logic repository
+// Import global settings store context links & printer logic repository
 import { useSettingsStore } from "../../store/useSettingsStore";
 import { printRepository } from "../../services/printRepository";
 
 const API_BASE = "http://localhost:8080";
-const ITEMS_PER_PAGE = 20;
+const ITEMS_PER_PAGE = 10;
 
 export default function SalesHistory() {
   // --- State Management ---
@@ -43,10 +43,10 @@ export default function SalesHistory() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [saleDetails, setSaleDetails] = useState(null);
   
-  // 🌟 Action Feedback Loading Indicator States
+  // Action Feedback Loading Indicator States
   const [isPrinting, setIsPrinting] = useState(false);
 
-  // 🌟 Pull global state configurations directly from your Zustand container
+  // Pull global state configurations directly from your Zustand container
   const settings = useSettingsStore((state) => state.settings);
   const fetchSettings = useSettingsStore((state) => state.fetchSettings);
 
@@ -90,13 +90,24 @@ export default function SalesHistory() {
     }
   };
 
-  // 🌟 Handle Receipt Print Spool Routine
+  // 🌟 FIX: Combined Payload Mapper Spool Engine
   const handlePrintReceipt = async () => {
-    if (!saleDetails) return;
+    if (!saleDetails || !selectedSale) return;
     setIsPrinting(true);
     try {
-      // Map combined properties explicitly down to the core service repository layers
-      await printRepository.printInvoiceReceipt(saleDetails, settings);
+      // Combines the parent metadata (customer/cashier info) with the deep nested cart items
+      const combinedSalePayload = {
+        ...selectedSale,
+        ...saleDetails,
+        items: saleDetails.items.map((item) => ({
+          product_name: item.product_name || "Item",
+          qty: Number(item.qty) || 1,
+          unit_price: Number(item.unit_price) || 0, // Maps cleanly to your printRepository setup
+          line_total: Number(item.line_total) || 0,
+        })),
+      };
+
+      await printRepository.printInvoiceReceipt(combinedSalePayload, settings);
     } catch (err) {
       alert(err.message || "Failed to trigger spool automation routing maps.");
     } finally {
@@ -421,10 +432,9 @@ export default function SalesHistory() {
                 </div>
               </div>
 
-              {/* 🌟 ACTION BAR ACTIONS INTERFACE TRACK */}
+              {/* ACTION BAR ACTIONS INTERFACE TRACK */}
               <div style={{ padding: 16, borderTop: `1px solid ${C.border}`, background: C.bg, display: "flex", flexDirection: "column", gap: 10 }}>
                 
-                {/* 🌟 ADDED: Dynamic Receipt Spool Print Action Button Trigger */}
                 <button
                   onClick={handlePrintReceipt}
                   disabled={isPrinting || !saleDetails}

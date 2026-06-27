@@ -19,7 +19,7 @@ const makeStyle = (overrides = {}) => ({
 export const printRepository = {
   /**
    * Transforms invoice transaction objects into structured thermal sections and spools to native hardware
-   * @param {Object} sale - Core invoice configuration data block from API
+   * @param {Object} sale - Core invoice configuration data block from API/Store
    * @param {Object} settings - Global Zustand system settings application state context
    */
   printInvoiceReceipt: async (sale, settings) => {
@@ -27,17 +27,16 @@ export const printRepository = {
       throw new Error("No system printer assigned! Please update configurations in Settings.");
     }
 
-    // Direct assignment now that your database stores 'Mm58' or 'Mm80' cleanly!
     const paperSize = settings.receipt_paper_size || "Mm80"; 
     
-    // ─── MATHEMATICAL GRID VALIDATION ───
-    // The sum of column_widths must absolutely equal the paper's line character limit.
-    let itemColumnWidths = [26, 6, 16]; // Default for Mm80 (26 + 6 + 16 = 48)
-    let financialColumnWidths = [32, 16]; // Default for Mm80 (32 + 16 = 48)
+    // ─── 📊 RECALCULATED MATHEMATICAL GRID FOR 4 COLUMNS ───
+    // The sum of column_widths must absolutely equal the paper's character limits.
+    let itemColumnWidths = [20, 5, 10, 13];    // For Mm80: 20 + 5 + 10 + 13 = 48 chars
+    let financialColumnWidths = [32, 16];      // For Mm80: 32 + 16 = 48 chars
 
     if (paperSize === "Mm58") {
-      itemColumnWidths = [16, 5, 11]; // Exact match for Mm58 (16 + 5 + 11 = 32)
-      financialColumnWidths = [20, 12]; // Exact match for Mm58 (20 + 12 = 32)
+      itemColumnWidths = [11, 4, 8, 9];       // For Mm58: 11 + 4 + 8 + 9 = 32 chars
+      financialColumnWidths = [20, 12];        // For Mm58: 20 + 12 = 32 chars
     }
 
     // Initialize the root payload envelope structure
@@ -80,20 +79,22 @@ export const printRepository = {
 
     sections.push({ Line: { character: "-" } });
 
-    // ─── 3. CART CONTENT SNAPSHOT GRID (NATIVE 3-COLUMN TABLE) ───
+    // ─── 3. CART CONTENT SNAPSHOT GRID (NATIVE 4-COLUMN TABLE) ───
     const tableBody = sale.items.map((item) => [
       { text: item.product_name, styles: makeStyle({ align: "left" }) },
       { text: `${item.qty}`, styles: makeStyle({ align: "center" }) },
-      { text: `${item.line_total.toFixed(2)} DA`, styles: makeStyle({ align: "right" }) },
+      { text: `${Number(item.unit_price).toFixed(2)}`, styles: makeStyle({ align: "right" }) }, // 🌟 Unit Price added
+      { text: `${Number(item.line_total).toFixed(2)}`, styles: makeStyle({ align: "right" }) },
     ]);
 
     sections.push({
       Table: {
-        columns: 3,
-        column_widths: itemColumnWidths, // 🌟 Sums perfectly to 32 or 48 depending on choice
+        columns: 4, // 🌟 Changed from 3 columns to 4
+        column_widths: itemColumnWidths,
         header: [
           { text: "ITEM DESCRIPTION", styles: makeStyle({ bold: true, align: "left" }) },
           { text: "QTY", styles: makeStyle({ bold: true, align: "center" }) },
+          { text: "P.U", styles: makeStyle({ bold: true, align: "right" }) }, // 🌟 Header added
           { text: "TOTAL", styles: makeStyle({ bold: true, align: "right" }) },
         ],
         body: tableBody,
@@ -127,7 +128,7 @@ export const printRepository = {
     sections.push({
       Table: {
         columns: 2,
-        column_widths: financialColumnWidths, // 🌟 Sums perfectly to 32 or 48 depending on choice
+        column_widths: financialColumnWidths,
         header: [],
         body: financialRows,
         truncate: false,

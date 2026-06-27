@@ -1,4 +1,4 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import {
   IconUser, IconChevronRight, IconShoppingCart,
   IconEdit, IconCash, IconPlayerPause, IconTrash,
@@ -6,12 +6,14 @@ import {
   IconLoader,
 } from "@tabler/icons-react";
 import usePosStore from "../../store/usePosStore";
+import { printRepository } from "../../services/printRepository"; 
+import { useSettingsStore } from "../../store/useSettingsStore";
 import { C, fmt } from "./posTheme";
 import CartItemRow from "./CartItemRow";
 import Btn from "./ui/Btn";
 
 export default function CartPanel({
-  onExecuteSale, onPark, onClear, onPrintInvoice, onPrintReceipt, saleLoading = false
+  onExecuteSale, onPark, onClear, saleLoading = false
 }) {
   // ── Pull state variables & navigation actions from store ─────────────────
   const {
@@ -21,21 +23,85 @@ export default function CartPanel({
     selectedIndex, selectNextItem, selectPrevItem, incrementSelectedItem, decrementSelectedItem
   } = usePosStore();
 
-  const { subtotal, adjustmentType, adjustmentValue, hasAdjustment, total } = getCartTotals();
+  const [printLoading, setPrintLoading] = useState(false);
+  const settings = useSettingsStore((state) => state.settings);
+
+  // ── FOOLPROOF LOCAL CALCULATION ENGINE ───────────────────────────────────
+  // This reads fallback fields directly from items to prevent any store-level NaN errors
+  const computedSubtotal = cartItems.reduce((sum, item) => {
+    const qty = Number(item.qty ?? item.quantity ?? 1);
+    const price = Number(item.price ?? item.selling_price ?? 0);
+    const lineTotal = Number(item.line_total ?? (price * qty));
+    return sum + lineTotal;
+  }, 0);
+
+  const rawStoreTotals = getCartTotals() || {};
+  const adjustmentType = rawStoreTotals.adjustmentType || "discount";
+  const adjustmentValue = Number(rawStoreTotals.adjustmentValue) || 0;
+  const hasAdjustment = !!rawStoreTotals.hasAdjustment || adjustmentValue > 0;
+
+  // Calculate final total safely based on the subtotal calculated above
+  let computedTotal = computedSubtotal;
+  if (hasAdjustment) {
+    if (adjustmentType === "discount") {
+      computedTotal = Math.max(0, computedSubtotal - adjustmentValue);
+    } else {
+      computedTotal = computedSubtotal + adjustmentValue;
+    }
+  }
+
+  // Use local fallback values if store calculations come back empty or unparseable
+  const subtotal = Number(rawStoreTotals.subtotal) || computedSubtotal;
+  const total = Number(rawStoreTotals.total) || computedTotal;
+
   const isEmpty = cartItems.length === 0;
+
+  // ── Centralized Local Printing Handlers ──────────────────────────────────
+  const handlePrintCurrentCart = async () => {
+  if (isEmpty || printLoading) return;
+
+  setPrintLoading(true);
+  try {
+    const currentDraftSale = {
+      id: "DRAFT",
+      created_at: new Date().toISOString(),
+      cashier_name: "Active Session",
+      customer_name: cartClient?.name || "Walk-in Client",
+      subtotal: subtotal,
+      adj_value: adjustmentValue,
+      adj_type: adjustmentType,
+      total: total,
+      items: cartItems.map((item) => {
+        const itemQty = Number(item.qty) || 1;
+        const itemPrice = Number(item.unitPrice) || 0;
+        
+        return {
+          product_name: item.name || "Item",
+          qty: itemQty,
+          unit_price: itemPrice, // 🌟 This property must match what tableBody expects!
+          line_total: Number(item.lineTotal) || (itemPrice * itemQty),
+        };
+      }),
+    };
+
+    await printRepository.printInvoiceReceipt(currentDraftSale, settings || {});
+  } catch (err) {
+    console.error("Cart preview printing failed:", err);
+    alert(err.message);
+  } finally {
+    setPrintLoading(false);
+  }
+};
 
   // ── Keyboard interception for selecting & managing items ─────────────────
   useEffect(() => {
-    const handleKeyDown = (e) => {
-      if (cartItems.length === 0) return;
+    if (cartItems.length === 0) return;
 
-      // Ensure shortcut triggers don't disrupt regular text input workflows
+    const handleKeyDown = (e) => {
       const activeEl = document.activeElement;
       if (activeEl) {
         const tagName = activeEl.tagName;
         if (tagName === "INPUT" || tagName === "TEXTAREA" || tagName === "SELECT") {
-          
-          // Check if the current focused element is the primary barcode scan zone
           const isBarcodeField = 
             activeEl.id === "barcode-input" ||
             activeEl.name === "barcode" ||
@@ -43,7 +109,7 @@ export default function CartPanel({
             activeEl.placeholder?.toLowerCase().includes("barcode") ||
             activeEl.placeholder?.toLowerCase().includes("scan");
 
-          if (!isBarcodeField) return; // Halt intercept if editing pricing or customer profiles
+          if (!isBarcodeField) return; 
         }
       }
 
@@ -52,23 +118,19 @@ export default function CartPanel({
           e.preventDefault();
           selectNextItem();
           break;
-
         case "ArrowUp":
           e.preventDefault();
           selectPrevItem();
           break;
-
         case "+":
         case "=":
           e.preventDefault();
           incrementSelectedItem();
           break;
-
         case "-":
           e.preventDefault();
           decrementSelectedItem();
           break;
-
         default:
           break;
       }
@@ -126,7 +188,7 @@ export default function CartPanel({
             <CartItemRow 
               key={item.cartId} 
               item={item} 
-              isSelected={index === selectedIndex} // 👈 pass selection state down for styling rules
+              isSelected={index === selectedIndex} 
             />
           ))
         )}
@@ -135,8 +197,6 @@ export default function CartPanel({
       {/* ── Totals block ───────────────────────────────────────────────── */}
       {!isEmpty && (
         <div style={{ borderTop: `1px solid ${C.border}`, borderBottom: `1px solid ${C.border}` }}>
-
-          {/* Subtotal row — only shown when there's an active adjustment */}
           {hasAdjustment && (
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 14px 4px" }}>
               <span style={{ fontSize: 12, color: C.text3 }}>Subtotal</span>
@@ -144,7 +204,6 @@ export default function CartPanel({
             </div>
           )}
 
-          {/* Discount or surcharge row */}
           {hasAdjustment && (
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "2px 14px 6px" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
@@ -163,7 +222,6 @@ export default function CartPanel({
             </div>
           )}
 
-          {/* Total row — always shown, clickable to open adjustment modal */}
           <div
             onClick={openTotalEditModal}
             style={{
@@ -196,34 +254,38 @@ export default function CartPanel({
             fontFamily: "inherit", transition: "background 0.13s",
           }}
         >
-          {
-            saleLoading ? (
-              <>
-                <IconLoader size={17} stroke={2} style={{ animation: 'spin 1s linear infinite' }} />
-                Processing...
-              </>
-            ) : (
-              <>
-                <IconCash size={18} stroke={2} />
-                Execute sale
-                <span style={{ fontSize: 10, opacity: 0.75, marginLeft: 2 }}>F5</span>
-              </>
-            )
-          }
+          {saleLoading ? (
+            <>
+              <IconLoader size={17} stroke={2} style={{ animation: 'spin 1s linear infinite' }} />
+              Processing...
+            </>
+          ) : (
+            <>
+              <IconCash size={18} stroke={2} />
+              Execute sale
+              <span style={{ fontSize: 10, opacity: 0.75, marginLeft: 2 }}>F5</span>
+            </>
+          )}
         </button>
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
-          <Btn onClick={onPark} variant="outline" size="sm" style={{ justifyContent: "center", gap: 4 }}>
+          <Btn onClick={onPark} disabled={isEmpty} variant="outline" size="sm" style={{ justifyContent: "center", gap: 4, opacity: isEmpty ? 0.5 : 1 }}>
             <IconPlayerPause size={13} stroke={2} /> Park <span style={{ fontSize: 10, opacity: 0.6 }}>F3</span>
           </Btn>
-          <Btn onClick={onClear} variant="outline" size="sm" style={{ justifyContent: "center", gap: 4, color: C.danger }}>
+          <Btn onClick={onClear} disabled={isEmpty} variant="outline" size="sm" style={{ justifyContent: "center", gap: 4, color: isEmpty ? C.text3 : C.danger, opacity: isEmpty ? 0.5 : 1 }}>
             <IconTrash size={13} stroke={2} /> Clear <span style={{ fontSize: 10, opacity: 0.6 }}>F4</span>
           </Btn>
-          <Btn onClick={onPrintInvoice} variant="outline" size="sm" style={{ justifyContent: "center", gap: 4 }}>
+          
+          <Btn onClick={handlePrintCurrentCart} disabled={isEmpty || printLoading} variant="outline" size="sm" style={{ justifyContent: "center", gap: 4, opacity: isEmpty ? 0.5 : 1 }}>
             <IconCreditCard size={13} stroke={1.75} /> Invoice <span style={{ fontSize: 10, opacity: 0.6 }}>F6</span>
           </Btn>
-          <Btn onClick={onPrintReceipt} variant="outline" size="sm" style={{ justifyContent: "center", gap: 4 }}>
-            <IconReceipt size={13} stroke={1.75} /> Receipt <span style={{ fontSize: 10, opacity: 0.6 }}>F7</span>
+          <Btn onClick={handlePrintCurrentCart} disabled={isEmpty || printLoading} variant="outline" size="sm" style={{ justifyContent: "center", gap: 4, opacity: isEmpty ? 0.5 : 1 }}>
+            {printLoading ? (
+              <IconLoader size={13} style={{ animation: 'spin 1s linear infinite' }} />
+            ) : (
+              <IconReceipt size={13} stroke={1.75} />
+            )}
+            Receipt <span style={{ fontSize: 10, opacity: 0.6 }}>F7</span>
           </Btn>
         </div>
       </div>
