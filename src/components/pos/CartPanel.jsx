@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect } from "react";
 import {
   IconUser, IconChevronRight, IconShoppingCart,
   IconEdit, IconCash, IconPlayerPause, IconTrash,
@@ -6,16 +6,20 @@ import {
   IconLoader,
 } from "@tabler/icons-react";
 import usePosStore from "../../store/usePosStore";
-import { printRepository } from "../../services/printRepository"; 
-import { useSettingsStore } from "../../store/useSettingsStore";
 import { C, fmt } from "./posTheme";
 import CartItemRow from "./CartItemRow";
 import Btn from "./ui/Btn";
 
 export default function CartPanel({
-  onExecuteSale, onPark, onClear, saleLoading = false
+  onExecuteSale, 
+  onPark, 
+  onClear, 
+  onPrintInvoice, 
+  onPrintReceipt, 
+  saleLoading = false,
+  printInvoiceLoading = false,
+  printReceiptLoading = false
 }) {
-  // ── Pull state variables & navigation actions from store ─────────────────
   const {
     cartItems, cartClient,
     openClientModal, openTotalEditModal,
@@ -23,12 +27,7 @@ export default function CartPanel({
     selectedIndex, selectNextItem, selectPrevItem, incrementSelectedItem, decrementSelectedItem
   } = usePosStore();
 
-  // Distinct loading states for clean UI action feedback
-  const [printReceiptLoading, setPrintReceiptLoading] = useState(false);
-  const [printInvoiceLoading, setPrintInvoiceLoading] = useState(false);
-  const settings = useSettingsStore((state) => state.settings);
-
-  // ── FOOLPROOF LOCAL CALCULATION ENGINE ───────────────────────────────────
+  // Local pricing feedback calculations
   const computedSubtotal = cartItems.reduce((sum, item) => {
     const qty = Number(item.qty ?? item.quantity ?? 1);
     const price = Number(item.price ?? item.selling_price ?? 0);
@@ -52,69 +51,9 @@ export default function CartPanel({
 
   const subtotal = Number(rawStoreTotals.subtotal) || computedSubtotal;
   const total = Number(rawStoreTotals.total) || computedTotal;
-
   const isEmpty = cartItems.length === 0;
 
-  // ── Shared Draft Payload Builder ─────────────────────────────────────────
-  const buildDraftSalePayload = () => {
-    const discountAmount = adjustmentType === "discount" ? adjustmentValue : 0;
-
-    return {
-      id: "DRAFT",
-      created_at: new Date().toISOString(),
-      cashier_name: "Active Session",
-      customer_name: cartClient?.name || "Walk-in Client",
-      customer_phone: cartClient?.phone || "", 
-      subtotal: subtotal,
-      adj_value: adjustmentValue,
-      adj_type: adjustmentType,
-      discount: discountAmount, // 🌟 Explicit calculation field mapping
-      total: total,
-      items: cartItems.map((item) => {
-        const itemQty = Number(item.qty ?? item.quantity ?? 1);
-        const itemPrice = Number(item.unitPrice ?? item.price ?? item.selling_price ?? 0);
-        
-        return {
-          product_name: item.name || "Item",
-          combination: item.combination || item.variant_name || "Standard",
-          qty: itemQty,
-          unit_price: itemPrice, 
-          line_total: Number(item.lineTotal ?? item.line_total) || (itemPrice * itemQty),
-        };
-      }),
-    };
-  };
-
-  // ── Centralized Local Printing Handlers ──────────────────────────────────
-  const handlePrintReceipt = async () => {
-    if (isEmpty || printReceiptLoading || printInvoiceLoading) return;
-    setPrintReceiptLoading(true);
-    try {
-      const currentDraftSale = buildDraftSalePayload();
-      await printRepository.printInvoiceReceipt(currentDraftSale, settings || {});
-    } catch (err) {
-      console.error("Cart preview receipt printing failed:", err);
-      alert(err.message);
-    } finally {
-      setPrintReceiptLoading(false);
-    }
-  };
-
-  const handlePrintInvoice = async () => {
-    if (isEmpty || printReceiptLoading || printInvoiceLoading) return;
-    setPrintInvoiceLoading(true);
-    try {
-      const currentDraftSale = buildDraftSalePayload();
-      await printRepository.printInvoice(currentDraftSale, settings || {});
-    } catch (err) {
-      console.error("Cart preview invoice printing failed:", err);
-      alert(err.message);
-    } finally {
-      setPrintInvoiceLoading(false);
-    }
-  };
-
-  // ── Keyboard interception for selecting & managing items ─────────────────
+  // ── Keyboard interception for list navigation only ─────────────────────────
   useEffect(() => {
     if (cartItems.length === 0) return;
 
@@ -152,14 +91,6 @@ export default function CartPanel({
           e.preventDefault();
           decrementSelectedItem();
           break;
-        case "F6":
-          e.preventDefault();
-          handlePrintInvoice();
-          break;
-        case "F7":
-          e.preventDefault();
-          handlePrintReceipt();
-          break;
         default:
           break;
       }
@@ -167,10 +98,7 @@ export default function CartPanel({
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [
-    cartItems, selectNextItem, selectPrevItem, incrementSelectedItem, 
-    decrementSelectedItem, subtotal, adjustmentValue, adjustmentType, total, cartClient, settings
-  ]);
+  }, [cartItems, selectNextItem, selectPrevItem, incrementSelectedItem, decrementSelectedItem]);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
@@ -206,7 +134,7 @@ export default function CartPanel({
       </div>
 
       {/* ── Cart items ─────────────────────────────────────────────────── */}
-      <div style={{ flex: 1, overflowY: "auto", padding: "0 14px" }}>
+      <div className="mt-2" style={{ flex: 1, overflowY: "auto", padding: "0 14px" }}>
         {isEmpty ? (
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", color: C.text3, gap: 10 }}>
             <IconShoppingCart size={40} stroke={1} style={{ opacity: 0.3 }} />
@@ -308,9 +236,8 @@ export default function CartPanel({
             <IconTrash size={13} stroke={2} /> Clear <span style={{ fontSize: 10, opacity: 0.6 }}>F4</span>
           </Btn>
           
-          {/* A4/Letter Full Document System Printer Trigger */}
           <Btn 
-            onClick={handlePrintInvoice} 
+            onClick={onPrintInvoice} 
             disabled={isEmpty || printReceiptLoading || printInvoiceLoading} 
             variant="outline" 
             size="sm" 
@@ -324,9 +251,8 @@ export default function CartPanel({
             Invoice <span style={{ fontSize: 10, opacity: 0.6 }}>F6</span>
           </Btn>
 
-          {/* Thermal POS Receipt Printer Trigger */}
           <Btn 
-            onClick={handlePrintReceipt} 
+            onClick={onPrintReceipt} 
             disabled={isEmpty || printReceiptLoading || printInvoiceLoading} 
             variant="outline" 
             size="sm" 

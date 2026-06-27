@@ -2,6 +2,7 @@
  * cartSlice.js — Shopping Cart Operations & Sale Execution Slice
  */
 import { posRepository } from "../services/posRepository";
+import { useSettingsStore } from "./useSettingsStore"; // 🌟 Imported to read live balance prefixes
 
 const uuid = () => Math.random().toString(36).slice(2, 10);
 
@@ -43,7 +44,6 @@ export const createCartSlice = (set, get) => ({
     if (s.cartItems.length === 0) return;
     const item = s.cartItems[s.selectedIndex];
     
-    // 🌟 FIXED: Changed from strict "pcs" to !isWeighted so any standard item scales safely
     if (item && !item.isWeighted) {
       item.qty += 1;
       item.lineTotal = Number((item.qty * item.unitPrice).toFixed(2));
@@ -58,7 +58,6 @@ export const createCartSlice = (set, get) => ({
       const newQty = item.qty - 1;
       if (newQty <= 0) {
         s.cartItems.splice(s.selectedIndex, 1);
-        // Balance out index safety boundaries after safe deletion
         if (s.selectedIndex >= s.cartItems.length && s.cartItems.length > 0) {
           s.selectedIndex = s.cartItems.length - 1;
         } else if (s.cartItems.length === 0) {
@@ -71,10 +70,9 @@ export const createCartSlice = (set, get) => ({
     }
   }),
 
-  // ── CART ADD/UPDATE REDUCERS (Auto-Selection Aware with Safe Fallbacks) ──
+  // ── CART ADD/UPDATE REDUCERS ────────────────────────────────────────────
   addSimpleProduct: (product, qty = 1, unitPrice = null) => {
     set((state) => {
-      // 🌟 FIXED: Added safe data lookups to prevent NaN if selling_price_1 is absent
       const price = Number(unitPrice ?? product.selling_price_1 ?? product.selling_price ?? product.price ?? 0);
       const inputQty = Number(qty) || 1;
 
@@ -107,7 +105,7 @@ export const createCartSlice = (set, get) => ({
   addWeightedProduct: (product, { qty = null, byPrice = null }, unitPrice = null) => {
     set((state) => {
       const price = Number(unitPrice ?? product.selling_price_1 ?? product.selling_price ?? product.price ?? 0);
-      const safePrice = price > 0 ? price : 1; // Prevent division by zero crashes
+      const safePrice = price > 0 ? price : 1; 
       
       let lineTotal = 0;
       let displayQty = 0;
@@ -276,7 +274,6 @@ export const createCartSlice = (set, get) => ({
     state.parkedCarts = state.parkedCarts.filter((c) => c.id !== parkedId);
   }),
 
-  // ── Checkout Modals Visibility ─────────────────────────────────────────
   openClientModal: () => set((s) => { s.clientModal = true; }),
   closeClientModal: () => set((s) => { s.clientModal = false; }),
   openTotalEditModal: () => set((s) => { s.totalEditModal = true; }),
@@ -285,12 +282,8 @@ export const createCartSlice = (set, get) => ({
   closeConfirmClearModal: () => set((s) => { s.confirmClearModal = false; }),
   setBarcodeBuffer: (v) => set((s) => { s.barcodeBuffer = v; }),
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // TRANSACTION SALES DISPATCHER
-  // ─────────────────────────────────────────────────────────────────────────
   executeSale: async (userId) => {
     const { cartItems, cartClient, getCartTotals } = get();
-
     if (cartItems.length === 0) return { success: false, reason: "empty_cart" };
     if (!userId) return { success: false, reason: "no_user" };
 
@@ -337,45 +330,69 @@ export const createCartSlice = (set, get) => ({
     }
   },
 
-  // ── 🏷️ BARCODE STREAM PROCESSING ENGINE ──────────────────────────────────
+  // ── 🏷️ BARCODE STREAM PROCESSING ENGINE (With Scale Integration) ────────
   processBarcode: async (raw) => {
     const code = raw.trim();
     if (!code) return null;
 
+    // 1. Read Scale Prefix Settings dynamically
+    const settings = useSettingsStore.getState().settings || {};
+    const prefix = settings.balance_prefix || "21";
+
+    let lookupCode = code;
+    let isScaleBarcode = false;
+    let scaleQty = 0;
+
+    // 2. Parse Scale Barcodes: format standard EAN-13 (PPWWWWWQQQQQC)
+    // PP = Prefix (2 chars), WWWWW = Product Item Code (5 chars), QQQQQ = Weight (5 chars), C = Checksum
+    if (code.length === 13 && code.startsWith(prefix)) {
+      isScaleBarcode = true;
+      lookupCode = code.substring(prefix.length, prefix.length + 5); 
+      const rawValue = Number(code.substring(prefix.length + 5, prefix.length + 10)) || 0;
+      scaleQty = rawValue / 1000; // Converts scale grams value (e.g. 01450) into Kilograms (1.450 kg)
+    }
+
     const evaluateProductMatch = (productList) => {
       for (const p of productList) {
         if (p.variants?.length) {
-          const v = p.variants.find((vr) => vr.codebar === code);
+          const v = p.variants.find((vr) => vr.codebar === lookupCode);
           if (v) return { type: "variant_added", product: p, variant: v };
         }
       }
-      const byCodebar = productList.find((p) => p.codebar === code);
+      const byCodebar = productList.find((p) => p.codebar === lookupCode);
       if (byCodebar) {
         if (byCodebar.product_type === "variable") return { type: "variant_modal", product: byCodebar };
-        if (byCodebar.measurement_unit && byCodebar.measurement_unit !== "pcs") return { type: "weight_modal", product: byCodebar };
+        if (isScaleBarcode || (byCodebar.measurement_unit && byCodebar.measurement_unit !== "pcs")) {
+          return { type: isScaleBarcode ? "scale_added" : "weight_modal", product: byCodebar };
+        }
         return { type: "simple_added", product: byCodebar };
       }
-      const byRef = productList.find((p) => p.reference?.toLowerCase() === code.toLowerCase());
+      const byRef = productList.find((p) => p.reference?.toLowerCase() === lookupCode.toLowerCase());
       if (byRef) {
         if (byRef.product_type === "variable") return { type: "variant_modal", product: byRef };
-        if (byRef.measurement_unit && byRef.measurement_unit !== "pcs") return { type: "weight_modal", product: byRef };
+        if (isScaleBarcode || (byRef.measurement_unit && byRef.measurement_unit !== "pcs")) {
+          return { type: isScaleBarcode ? "scale_added" : "weight_modal", product: byRef };
+        }
         return { type: "simple_added", product: byRef };
       }
       return null;
     };
 
+    // Evaluate against memory state array cache
     const localResult = evaluateProductMatch(get().products || []);
     
     if (localResult) {
-      if (localResult.type === "variant_added") get().addVariantProduct(localResult.product, localResult.variant);
-      if (localResult.type === "simple_added") get().addSimpleProduct(localResult.product);
-      if (localResult.type === "variant_modal") get().openVariantModal(localResult.product);
-      if (localResult.type === "weight_modal") get().openWeightModal(localResult.product);
+      if (localResult.type === "scale_added") get().addWeightedProduct(localResult.product, { qty: scaleQty });
+      else if (localResult.type === "variant_added") get().addVariantProduct(localResult.product, localResult.variant);
+      else if (localResult.type === "simple_added") get().addSimpleProduct(localResult.product);
+      else if (localResult.type === "variant_modal") get().openVariantModal(localResult.product);
+      else if (localResult.type === "weight_modal") get().openWeightModal(localResult.product);
       return localResult;
     }
 
+    // Fallback: Query matching lookup code from API
     try {
-      const response = await posRepository.getProducts(1, 1, code);
+      const response = await posRepository.getProducts(1, 1, lookupCode);
 
       if (response?.data?.length > 0) {
         const matchedProduct = response.data[0];
@@ -389,10 +406,11 @@ export const createCartSlice = (set, get) => ({
             }
           });
 
-          if (remoteResult.type === "variant_added") get().addVariantProduct(matchedProduct, remoteResult.variant);
-          if (remoteResult.type === "simple_added") get().addSimpleProduct(matchedProduct);
-          if (remoteResult.type === "variant_modal") get().openVariantModal(matchedProduct);
-          if (remoteResult.type === "weight_modal") get().openWeightModal(matchedProduct);
+          if (remoteResult.type === "scale_added") get().addWeightedProduct(matchedProduct, { qty: scaleQty });
+          else if (remoteResult.type === "variant_added") get().addVariantProduct(matchedProduct, remoteResult.variant);
+          else if (remoteResult.type === "simple_added") get().addSimpleProduct(matchedProduct);
+          else if (remoteResult.type === "variant_modal") get().openVariantModal(matchedProduct);
+          else if (remoteResult.type === "weight_modal") get().openWeightModal(matchedProduct);
           return remoteResult;
         }
       }
@@ -418,10 +436,6 @@ export const createCartSlice = (set, get) => ({
     };
   },
 
-  getCartTotal: () => {
-    const { subtotal, total } = get().getCartTotals();
-    return total;
-  },
-
+  getCartTotal: () => get().getCartTotals().total,
   getCartItemCount: () => get().cartItems.reduce((s, i) => s + (Number(i.qty) || 0), 0),
 });

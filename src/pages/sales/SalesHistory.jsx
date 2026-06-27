@@ -9,7 +9,6 @@ import {
   IconTrendingUp, 
   IconCash, 
   IconShoppingBag,
-  IconCheck,
   IconAlertCircle,
   IconPrinter 
 } from "@tabler/icons-react";
@@ -23,20 +22,32 @@ import { printRepository } from "../../services/printRepository";
 const API_BASE = "http://localhost:8080";
 const ITEMS_PER_PAGE = 10;
 
+// Helper to get local date string in YYYY-MM-DD format safely
+const getTodayString = () => {
+  const d = new Date();
+  const offset = d.getTimezoneOffset();
+  const localDate = new Date(d.getTime() - (offset * 60 * 1000));
+  return localDate.toISOString().split("T")[0];
+};
+
 export default function SalesHistory() {
+  const todayStr = getTodayString();
+
   // --- State Management ---
   const [sales, setSales] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   
-  // --- Filter Controls State ---
+  // --- Filter Controls State (Defaulted to Today) ---
   const [searchId, setSearchId] = useState("");
-  const [startDate, setStartDate] = useState("");
-  const [endDate, setEndDate] = useState("");
+  const [startDate, setStartDate] = useState(todayStr);
+  const [endDate, setEndDate] = useState(todayStr);
   const [statusFilter, setStatusFilter] = useState("all");
 
-  // --- Pagination State ---
+  // --- Backend Pagination Metadata States ---
   const [currentPage, setCurrentPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [totalCount, setTotalCount] = useState(0);
 
   // --- Active Selection State (Master-Detail Pane) ---
   const [selectedSale, setSelectedSale] = useState(null);
@@ -51,12 +62,31 @@ export default function SalesHistory() {
   const settings = useSettingsStore((state) => state.settings);
   const fetchSettings = useSettingsStore((state) => state.fetchSettings);
 
-  // --- Fetch Sales Headers & Settings on Mount ---
+  // --- Dynamic Fetch Pipeline via Backend Routing Parameters ---
   const fetchSales = async () => {
     setLoading(true);
     try {
-      const response = await axios.get(`${API_BASE}/api/sales`);
-      setSales(response.data);
+      const params = {
+        page: currentPage,
+        per_page: ITEMS_PER_PAGE,
+      };
+
+      if (statusFilter !== "all") {
+        params.status = statusFilter;
+      }
+      if (startDate) {
+        params.start_date = `${startDate} 00:00:00`;
+      }
+      if (endDate) {
+        params.end_date = `${endDate} 23:59:59`;
+      }
+
+      const response = await axios.get(`${API_BASE}/api/sales`, { params });
+      const { data, total_count, total_pages } = response.data;
+      
+      setSales(data || []);
+      setTotalCount(total_count || 0);
+      setTotalPages(total_pages || 1);
       setError(null);
     } catch (err) {
       console.error("Error fetching sales history:", err);
@@ -66,15 +96,21 @@ export default function SalesHistory() {
     }
   };
 
+  // Trigger query dispatch loop context on state/pagination change
   useEffect(() => {
     fetchSales();
+  }, [currentPage, startDate, endDate, statusFilter]);
+
+  // Sync settings on mount
+  useEffect(() => {
     fetchSettings();
   }, [fetchSettings]);
 
-  // Reset page index on filter mutations
-  useEffect(() => {
+  // Reset page index safely to page 1 on filter state mutations
+  const handleFilterChange = (setter, value) => {
+    setter(value);
     setCurrentPage(1);
-  }, [searchId, startDate, endDate, statusFilter]);
+  };
 
   // --- Fetch Detailed Sub-Items when a Sale Row is Selected ---
   const handleSelectSale = async (sale) => {
@@ -96,13 +132,12 @@ export default function SalesHistory() {
     if (!saleDetails || !selectedSale) return;
     setIsPrinting(true);
     try {
-      // Explicit check to safely pass discount metrics to the invoice print engine
       const discountAmount = saleDetails.adj_type === "discount" ? Number(saleDetails.adj_value) || 0 : 0;
 
       const combinedSalePayload = {
         ...selectedSale,
         ...saleDetails,
-        discount: discountAmount, // 🌟 Explicit discount calculation field mapping
+        discount: discountAmount,
         items: saleDetails.items.map((item) => ({
           product_name: item.product_name || "Item",
           qty: Number(item.qty) || 1,
@@ -124,13 +159,12 @@ export default function SalesHistory() {
     if (!saleDetails || !selectedSale) return;
     setIsPrintingInvoice(true);
     try {
-      // Explicit check to safely pass discount metrics to the invoice print engine
       const discountAmount = saleDetails.adj_type === "discount" ? Number(saleDetails.adj_value) || 0 : 0;
 
       const combinedSalePayload = {
         ...selectedSale,
         ...saleDetails,
-        discount: discountAmount, // 🌟 Explicit discount calculation field mapping
+        discount: discountAmount,
         items: saleDetails.items.map((item) => ({
           product_name: item.product_name || "Item",
           qty: Number(item.qty) || 1,
@@ -155,7 +189,6 @@ export default function SalesHistory() {
 
     try {
       await axios.patch(`${API_BASE}/api/sales/${saleId}/void`);
-      
       setSales(prev => prev.map(s => s.id === saleId ? { ...s, status: "voided" } : s));
       
       if (selectedSale && selectedSale.id === saleId) {
@@ -167,128 +200,115 @@ export default function SalesHistory() {
     }
   };
 
-  // --- Client-Side Multi-Filter Matrix Evaluation ---
-  const filteredSales = sales.filter(sale => {
-    const matchesId = searchId ? sale.id.toLowerCase().includes(searchId.toLowerCase()) : true;
-    const matchesStatus = statusFilter === "all" ? true : sale.status === statusFilter;
-    
-    let matchesDate = true;
-    if (startDate || endDate) {
-      const saleDate = new Date(sale.created_at);
-      if (startDate && saleDate < new Date(startDate)) {
-        matchesDate = false;
-      }
-      if (endDate) {
-        const endThreshold = new Date(endDate);
-        endThreshold.setHours(23, 59, 59, 999); 
-        if (saleDate > endThreshold) {
-          matchesDate = false;
-        }
-      }
-    }
-
-    return matchesId && matchesStatus && matchesDate;
+  const displayedSales = sales.filter(sale => {
+    return searchId ? sale.id.toLowerCase().includes(searchId.toLowerCase()) : true;
   });
 
-  const totalPages = Math.ceil(filteredSales.length / ITEMS_PER_PAGE);
-  const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
-  const displayedSales = filteredSales.slice(startIndex, startIndex + ITEMS_PER_PAGE);
-
-  const stats = filteredSales.reduce((acc, sale) => {
+  const pageStats = displayedSales.reduce((acc, sale) => {
     if (sale.status !== "voided") {
       acc.revenue += sale.total;
       acc.profit += (sale.profit !== undefined ? sale.profit : sale.total * 0.20);
-      acc.activeCount += 1;
     }
     return acc;
-  }, { revenue: 0, profit: 0, activeCount: 0 });
+  }, { revenue: 0, profit: 0 });
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100vh", background: C.bg || "#F8F9FA", fontFamily: "inherit" }}>
+    <div className="flex flex-col h-screen font-sans antialiased" style={{ backgroundColor: C.bg || "#F8F9FA" }}>
       
       {/* ─── HEADER TITLE ─── */}
-      <div style={{ padding: "16px 24px", borderBottom: `1px solid ${C.border}`, background: C.surface }}>
-        <h1 style={{ margin: 0, fontSize: 20, fontWeight: 600, color: C.text1 }}>Sales History Ledger</h1>
-        <p style={{ margin: "4px 0 0 0", fontSize: 12, color: C.text3 }}>Review invoices, monitor margins, and void historical records.</p>
+      <div className="p-4 px-6 border-b" style={{ backgroundColor: C.surface, borderColor: C.border }}>
+        <h1 className="m-0 text-xl font-semibold tracking-tight" style={{ color: C.text1 }}>Sales History Ledger</h1>
+        <p className="m-0 mt-1 text-xs" style={{ color: C.text3 }}>Review invoices, monitor margins, and void historical records.</p>
       </div>
 
       {/* ─── LIVE FINANCIAL KPI METRICS MATRIX ─── */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16, padding: "20px 24px 10px" }}>
-        <div style={{ background: C.surface, borderRadius: 12, padding: 16, border: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 14 }}>
-          <div style={{ width: 44, height: 44, borderRadius: 10, background: "#E8F0FE", color: "#1A73E8", display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <div className="grid grid-cols-3 gap-4 pt-5 px-6 pb-2.5">
+        {/* KPI: Listed Records */}
+        <div className="rounded-xl p-4 border flex items-center gap-3.5 shadow-sm" style={{ backgroundColor: C.surface, borderColor: C.border }}>
+          <div className="w-11 h-11 rounded-lg bg-[#E8F0FE] text-[#1A73E8] flex items-center justify-center shrink-0">
             <IconShoppingBag size={22} />
           </div>
           <div>
-            <div style={{ fontSize: 12, color: C.text3, fontWeight: 500 }}>Transactions Listed</div>
-            <div style={{ fontSize: 22, fontWeight: 700, color: C.text1, marginTop: 2 }}>
-              {filteredSales.length} <span style={{ fontSize: 12, fontWeight: 400, color: C.text3 }}>({stats.activeCount} Active)</span>
+            <div className="text-xs font-medium" style={{ color: C.text3 }}>Total Found Records</div>
+            <div className="text-2xl font-bold mt-0.5" style={{ color: C.text1 }}>
+              {totalCount} <span className="text-xs font-normal" style={{ color: C.text3 }}>(Filtered Scope)</span>
             </div>
           </div>
         </div>
 
-        <div style={{ background: C.surface, borderRadius: 12, padding: 16, border: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 14 }}>
-          <div style={{ width: 44, height: 44, borderRadius: 10, background: "#E6F4EA", color: "#137333", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        {/* KPI: Gross Revenue */}
+        <div className="rounded-xl p-4 border flex items-center gap-3.5 shadow-sm" style={{ backgroundColor: C.surface, borderColor: C.border }}>
+          <div className="w-11 h-11 rounded-lg bg-[#E6F4EA] text-[#137333] flex items-center justify-center shrink-0">
             <IconCash size={22} />
           </div>
           <div>
-            <div style={{ fontSize: 12, color: C.text3, fontWeight: 500 }}>Gross Financial Revenue</div>
-            <div style={{ fontSize: 22, fontWeight: 700, color: "#137333", marginTop: 2 }}>{fmt(stats.revenue)}</div>
+            <div className="text-xs font-medium" style={{ color: C.text3 }}>Gross Revenue <span className="text-[10px] font-normal" style={{ color: C.text3 }}>(This Page)</span></div>
+            <div className="text-2xl font-bold mt-0.5 text-[#137333]">{fmt(pageStats.revenue)}</div>
           </div>
         </div>
 
-        <div style={{ background: C.surface, borderRadius: 12, padding: 16, border: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 14 }}>
-          <div style={{ width: 44, height: 44, borderRadius: 10, background: "#EAF2F8", color: "#2980B9", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        {/* KPI: Profit Margin */}
+        <div className="rounded-xl p-4 border flex items-center gap-3.5 shadow-sm" style={{ backgroundColor: C.surface, borderColor: C.border }}>
+          <div className="w-11 h-11 rounded-lg bg-[#EAF2F8] text-[#2980B9] flex items-center justify-center shrink-0">
             <IconTrendingUp size={22} />
           </div>
           <div>
-            <div style={{ fontSize: 12, color: C.text3, fontWeight: 500 }}>Estimated Profit Margin</div>
-            <div style={{ fontSize: 22, fontWeight: 700, color: "#2980B9", marginTop: 2 }}>{fmt(stats.profit)}</div>
+            <div className="text-xs font-medium" style={{ color: C.text3 }}>Est. Profit Margin <span className="text-[10px] font-normal" style={{ color: C.text3 }}>(This Page)</span></div>
+            <div className="text-2xl font-bold mt-0.5 text-[#2980B9]">{fmt(pageStats.profit)}</div>
           </div>
         </div>
       </div>
 
       {/* ─── SEARCH & FILTER UTILITY MATRIX ─── */}
-      <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, margin: "10px 24px 16px", padding: 14, display: "flex", flexWrap: "wrap", gap: 12, alignItems: "end" }}>
-        <div style={{ flex: "2 1 200px", minWidth: 180 }}>
-          <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: C.text2, marginBottom: 6 }}>Search Invoice ID</label>
-          <div style={{ position: "relative" }}>
-            <IconSearch size={15} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: C.text3 }} />
+      <div className="border rounded-xl mx-6 my-2.5 p-3.5 flex flex-wrap gap-3 items-end shadow-sm" style={{ backgroundColor: C.surface, borderColor: C.border }}>
+        {/* Search Input Box */}
+        <div className="flex-[2_1_200px] min-w-[180px]">
+          <label className="block text-[11px] font-semibold mb-1.5 tracking-wide uppercase" style={{ color: C.text2 }}>Search Visible Page ID</label>
+          <div className="relative">
+            <IconSearch size={15} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: C.text3 }} />
             <input 
               type="text" 
               placeholder="Ex: sale_xyz..."
               value={searchId}
               onChange={(e) => setSearchId(e.target.value)}
-              style={{ width: "100%", height: 36, borderRadius: 8, border: `1px solid ${C.border}`, padding: "0 10px 0 32px", fontSize: 13, background: C.bg, color: C.text1, outline: "none" }}
+              className="w-full h-9 rounded-lg border pl-9 pr-3 text-xs focus:outline-none transition-colors"
+              style={{ backgroundColor: C.bg, color: C.text1, borderColor: C.border }}
             />
           </div>
         </div>
 
-        <div style={{ flex: "1 1 140px" }}>
-          <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: C.text2, marginBottom: 6 }}>From Date</label>
+        {/* From Date Input */}
+        <div className="flex-1 min-w-[140px]">
+          <label className="block text-[11px] font-semibold mb-1.5 tracking-wide uppercase" style={{ color: C.text2 }}>From Date</label>
           <input 
             type="date" 
             value={startDate}
-            onChange={(e) => setStartDate(e.target.value)}
-            style={{ width: "100%", height: 36, borderRadius: 8, border: `1px solid ${C.border}`, padding: "0 10px", fontSize: 13, background: C.bg, color: C.text1, outline: "none" }}
+            onChange={(e) => handleFilterChange(setStartDate, e.target.value)}
+            className="w-full h-9 rounded-lg border px-3 text-xs focus:outline-none transition-colors"
+            style={{ backgroundColor: C.bg, color: C.text1, borderColor: C.border }}
           />
         </div>
 
-        <div style={{ flex: "1 1 140px" }}>
-          <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: C.text2, marginBottom: 6 }}>To Date</label>
+        {/* To Date Input */}
+        <div className="flex-1 min-w-[140px]">
+          <label className="block text-[11px] font-semibold mb-1.5 tracking-wide uppercase" style={{ color: C.text2 }}>To Date</label>
           <input 
             type="date" 
             value={endDate}
-            onChange={(e) => setEndDate(e.target.value)}
-            style={{ width: "100%", height: 36, borderRadius: 8, border: `1px solid ${C.border}`, padding: "0 10px", fontSize: 13, background: C.bg, color: C.text1, outline: "none" }}
+            onChange={(e) => handleFilterChange(setEndDate, e.target.value)}
+            className="w-full h-9 rounded-lg border px-3 text-xs focus:outline-none transition-colors"
+            style={{ backgroundColor: C.bg, color: C.text1, borderColor: C.border }}
           />
         </div>
 
-        <div style={{ flex: "1 1 130px" }}>
-          <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: C.text2, marginBottom: 6 }}>Invoice Status</label>
+        {/* Status Dropdown Options */}
+        <div className="flex-1 min-w-[130px]">
+          <label className="block text-[11px] font-semibold mb-1.5 tracking-wide uppercase" style={{ color: C.text2 }}>Invoice Status</label>
           <select
             value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            style={{ width: "100%", height: 36, borderRadius: 8, border: `1px solid ${C.border}`, padding: "0 10px", fontSize: 13, background: C.bg, color: C.text1, outline: "none", cursor: "pointer" }}
+            onChange={(e) => handleFilterChange(setStatusFilter, e.target.value)}
+            className="w-full h-9 rounded-lg border px-2.5 text-xs focus:outline-none cursor-pointer transition-colors"
+            style={{ backgroundColor: C.bg, color: C.text1, borderColor: C.border }}
           >
             <option value="all">All Receipts</option>
             <option value="completed">Completed</option>
@@ -296,39 +316,47 @@ export default function SalesHistory() {
           </select>
         </div>
 
+        {/* Clear Action Pin */}
         <button 
-          onClick={() => { setSearchId(""); setStartDate(""); setEndDate(""); setStatusFilter("all"); }}
-          style={{ height: 36, padding: "0 14px", borderRadius: 8, border: `1px solid ${C.border}`, background: C.surface, color: C.text2, fontSize: 12, fontWeight: 500, cursor: "pointer" }}
+          onClick={() => { 
+            setSearchId(""); 
+            setStartDate(todayStr); 
+            setEndDate(todayStr); 
+            setStatusFilter("all"); 
+            setCurrentPage(1);
+          }}
+          className="h-9 px-4 rounded-lg border text-xs font-medium cursor-pointer transition-colors"
+          style={{ backgroundColor: C.surface, color: C.text2, borderColor: C.border }}
         >
           Clear
         </button>
       </div>
 
       {/* ─── MAIN MASTER-DETAIL WORKSPACE ─── */}
-      <div style={{ flex: 1, display: "flex", overflow: "hidden", padding: "0 24px 24px", gap: 16 }}>
+      <div className="flex-1 flex overflow-hidden px-6 pb-6 gap-4">
         
         {/* LEFT COMPONENT: MASTER DATATABLE CONTAINER */}
-        <div style={{ flex: 1, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+        <div className="flex-1 border rounded-xl flex flex-col overflow-hidden shadow-sm" style={{ backgroundColor: C.surface, borderColor: C.border }}>
           {loading ? (
-            <div style={{ padding: 40, textAlign: "center", color: C.text3, fontSize: 13 }}>Reading audit stream logs...</div>
+            <div className="p-10 text-center text-xs font-medium tracking-wide" style={{ color: C.text3 }}>Reading audit stream logs...</div>
           ) : error ? (
-            <div style={{ padding: 40, textAlign: "center", color: C.danger, fontSize: 13 }}>{error}</div>
-          ) : filteredSales.length === 0 ? (
-            <div style={{ padding: 40, textAlign: "center", color: C.text3, fontSize: 13 }}>No matching transaction receipts found.</div>
+            <div className="p-10 text-center text-xs font-medium" style={{ color: C.danger }}>{error}</div>
+          ) : displayedSales.length === 0 ? (
+            <div className="p-10 text-center text-xs font-medium" style={{ color: C.text3 }}>No matching transaction receipts found.</div>
           ) : (
             <>
-              <div style={{ flex: 1, overflowY: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left", fontSize: 13 }}>
-                  <thead style={{ background: C.bg, position: "sticky", top: 0, zIndex: 1, borderBottom: `1px solid ${C.border}` }}>
+              <div className="flex-1 overflow-y-auto">
+                <table className="w-full border-collapse text-left text-xs">
+                  <thead className="sticky top-0 z-10 border-b" style={{ backgroundColor: C.bg, borderColor: C.border }}>
                     <tr>
-                      <th style={{ padding: "12px 16px", color: C.text2, fontWeight: 600 }}>Invoice ID</th>
-                      <th style={{ padding: "12px 16px", color: C.text2, fontWeight: 600 }}>Timestamp Date</th>
-                      <th style={{ padding: "12px 16px", color: C.text2, fontWeight: 600 }}>Client Target</th>
-                      <th style={{ padding: "12px 16px", color: C.text2, fontWeight: 600 }}>Total (DA)</th>
-                      <th style={{ padding: "12px 16px", color: C.text2, fontWeight: 600 }}>Status</th>
+                      <th className="p-3 px-4 font-semibold uppercase tracking-wider text-[10px]" style={{ color: C.text2 }}>Invoice ID</th>
+                      <th className="p-3 px-4 font-semibold uppercase tracking-wider text-[10px]" style={{ color: C.text2 }}>Timestamp Date</th>
+                      <th className="p-3 px-4 font-semibold uppercase tracking-wider text-[10px]" style={{ color: C.text2 }}>Client Target</th>
+                      <th className="p-3 px-4 font-semibold uppercase tracking-wider text-[10px]" style={{ color: C.text2 }}>Total (DA)</th>
+                      <th className="p-3 px-4 font-semibold uppercase tracking-wider text-[10px]" style={{ color: C.text2 }}>Status</th>
                     </tr>
                   </thead>
-                  <tbody>
+                  <tbody className="divide-y divide-slate-100">
                     {displayedSales.map((sale) => {
                       const isSelected = selectedSale?.id === sale.id;
                       const isVoided = sale.status === "voided";
@@ -337,35 +365,33 @@ export default function SalesHistory() {
                         <tr 
                           key={sale.id}
                           onClick={() => handleSelectSale(sale)}
+                          className="cursor-pointer transition-colors duration-150 border-b"
                           style={{ 
-                            borderBottom: `1px solid ${C.border}`, 
-                            cursor: "pointer",
-                            background: isSelected ? "#F1F5F9" : "transparent",
-                            transition: "background 0.1s ease"
+                            borderColor: C.border, 
+                            backgroundColor: isSelected ? "#F1F5F9" : "transparent" 
                           }}
                         >
-                          <td style={{ padding: "14px 16px", fontWeight: 600, color: C.text1 }}>
-                            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <td className="p-3.5 px-4 font-semibold" style={{ color: C.text1 }}>
+                            <div className="flex items-center gap-2">
                               <IconReceipt size={14} style={{ color: C.text3 }} />
                               {sale.id}
                             </div>
                           </td>
-                          <td style={{ padding: "14px 16px", color: C.text2 }}>
+                          <td className="p-3.5 px-4" style={{ color: C.text2 }}>
                             {new Date(sale.created_at).toLocaleString("fr-DZ", { dateStyle: "short", timeStyle: "short" })}
                           </td>
-                          <td style={{ padding: "14px 16px", color: C.text1 }}>
-                            {sale.customer_name || <span style={{ color: C.text3, fontSize: 12 }}>Walk-in Client</span>}
+                          <td className="p-3.5 px-4" style={{ color: C.text1 }}>
+                            {sale.customer_name || <span className="italic text-[11px]" style={{ color: C.text3 }}>Walk-in Client</span>}
                           </td>
-                          <td style={{ padding: "14px 16px", fontWeight: 700, color: isVoided ? C.text3 : C.text1, textDecoration: isVoided ? "line-through" : "none" }}>
+                          <td className="p-3.5 px-4 font-bold" style={{ 
+                            color: isVoided ? C.text3 : C.text1, 
+                            textDecoration: isVoided ? "line-through" : "none" 
+                          }}>
                             {fmt(sale.total)}
                           </td>
-                          <td style={{ padding: "14px 16px" }}>
-                            <span style={{ 
-                              fontSize: 11, 
-                              fontWeight: 600, 
-                              padding: "3px 8px", 
-                              borderRadius: 6,
-                              background: isVoided ? "#FEE2E2" : "#DCFCE7",
+                          <td className="p-3.5 px-4">
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider" style={{
+                              backgroundColor: isVoided ? "#FEE2E2" : "#DCFCE7",
                               color: isVoided ? "#EF4444" : "#15803D"
                             }}>
                               {sale.status}
@@ -387,109 +413,96 @@ export default function SalesHistory() {
           )}
         </div>
 
-        {/* RIGHT COMPONENT: DETAIL SUMMARY SLIDEOUT/DRAWER */}
-        <div style={{ width: 380, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+        {/* RIGHT COMPONENT: DETAIL SUMMARY DRAWER CARD */}
+        <div className="w-[380px] border rounded-xl flex flex-col overflow-hidden shadow-sm" style={{ backgroundColor: C.surface, borderColor: C.border }}>
           {selectedSale ? (
-            <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
-              <div style={{ padding: "16px", borderBottom: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", background: C.bg }}>
+            <div className="flex flex-col h-full">
+              <div className="p-4 border-b flex justify-between items-center" style={{ backgroundColor: C.bg, borderColor: C.border }}>
                 <div>
-                  <div style={{ fontSize: 11, fontWeight: 600, color: C.text3 }}>INVOICE SHEET</div>
-                  <div style={{ fontSize: 14, fontWeight: 700, color: C.text1, marginTop: 2 }}>#{selectedSale.id}</div>
+                  <div className="text-[10px] font-bold tracking-wider uppercase" style={{ color: C.text3 }}>Invoice Sheet</div>
+                  <div className="text-sm font-bold mt-0.5" style={{ color: C.text1 }}>#{selectedSale.id}</div>
                 </div>
                 <button 
                   onClick={() => { setSelectedSale(null); setSaleDetails(null); }}
-                  style={{ border: "none", background: "none", cursor: "pointer", color: C.text3 }}
+                  className="border-none bg-none cursor-pointer transition-colors"
+                  style={{ color: C.text3 }}
                 >
                   <IconX size={18} />
                 </button>
               </div>
 
-              <div style={{ flex: 1, overflowY: "auto", padding: 16 }}>
-                <div style={{ display: "flex", flexDirection: "column", gap: 10, paddingBottom: 16, borderBottom: `1px solid ${C.border}`, fontSize: 12 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between" }}>
+              <div className="flex-1 overflow-y-auto p-4">
+                {/* Meta Summary Properties Block */}
+                <div className="flex flex-col gap-2 pb-4 border-b text-xs" style={{ borderColor: C.border }}>
+                  <div className="flex justify-between">
                     <span style={{ color: C.text3 }}>Cashier / Operator:</span>
-                    <span style={{ color: C.text1, fontWeight: 500 }}>{selectedSale.cashier_name || "System"}</span>
+                    <span className="font-medium" style={{ color: C.text1 }}>{selectedSale.cashier_name || "System"}</span>
                   </div>
-                  <div style={{ display: "flex", justifyContent: "space-between" }}>
+                  <div className="flex justify-between">
                     <span style={{ color: C.text3 }}>Session Sequence:</span>
-                    <span style={{ color: C.text1, fontWeight: 500 }}>#{selectedSale.session_id}</span>
+                    <span className="font-medium" style={{ color: C.text1 }}>#{selectedSale.session_id}</span>
                   </div>
-                  <div style={{ display: "flex", justifyContent: "space-between" }}>
+                  <div className="flex justify-between">
                     <span style={{ color: C.text3 }}>Timestamp:</span>
-                    <span style={{ color: C.text1 }}>{selectedSale.created_at}</span>
+                    <span style={{ color: C.text2 }}>{selectedSale.created_at}</span>
                   </div>
                 </div>
 
-                <div style={{ marginTop: 16 }}>
-                  <div style={{ fontSize: 11, fontWeight: 600, color: C.text2, marginBottom: 10 }}>CART CONTENT SNAPSHOT</div>
+                {/* Sub-Items Cart Frame List */}
+                <div className="mt-4">
+                  <div className="text-[10px] font-bold tracking-wider uppercase mb-3" style={{ color: C.text2 }}>Cart Content Snapshot</div>
                   
                   {detailLoading ? (
-                    <div style={{ fontSize: 12, color: C.text3, textAlign: "center", padding: 20 }}>Reading item indices...</div>
+                    <div className="text-xs text-center py-6 tracking-wide" style={{ color: C.text3 }}>Reading item indices...</div>
                   ) : saleDetails ? (
-                    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                    <div className="flex flex-col gap-3.5">
                       {saleDetails.items.map((item) => (
-                        <div key={item.id} style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
-                          <div style={{ flex: 1, paddingRight: 10 }}>
-                            <div style={{ fontWeight: 500, color: C.text1 }}>{item.product_name}</div>
-                            <div style={{ fontSize: 11, color: C.text3, marginTop: 2 }}>
+                        <div key={item.id} className="flex justify-between text-xs items-start">
+                          <div className="flex-1 pr-3">
+                            <div className="font-medium" style={{ color: C.text1 }}>{item.product_name}</div>
+                            <div className="text-[11px] mt-0.5" style={{ color: C.text3 }}>
                               {item.qty} {item.unit} × {fmt(item.unit_price)}
                             </div>
                           </div>
-                          <div style={{ fontWeight: 600, color: C.text1, textAlign: "right" }}>
+                          <div className="font-semibold text-right shrink-0" style={{ color: C.text1 }}>
                             {fmt(item.line_total)}
                           </div>
                         </div>
                       ))}
 
-                      <div style={{ borderTop: `1px dashed ${C.border}`, paddingTop: 12, display: "flex", flexDirection: "column", gap: 8, fontSize: 12, color: C.text2 }}>
-                        <div style={{ display: "flex", justifyContent: "space-between" }}>
-                          <span>Subtotal Basket:</span>
-                          <span>{fmt(saleDetails.subtotal)}</span>
+                      {/* Summary Pricing Math Breakdown */}
+                      <div className="border-t border-dashed pt-3.5 flex flex-col gap-2 text-xs" style={{ borderColor: C.border }}>
+                        <div className="flex justify-between">
+                          <span style={{ color: C.text3 }}>Subtotal Basket:</span>
+                          <span className="font-medium" style={{ color: C.text2 }}>{fmt(saleDetails.subtotal)}</span>
                         </div>
                         {saleDetails.adj_value > 0 && (
-                          <div style={{ display: "flex", justifyContent: "space-between", color: saleDetails.adj_type === "discount" ? C.danger : C.text1 }}>
+                          <div className="flex justify-between font-medium" style={{ color: saleDetails.adj_type === "discount" ? C.danger : C.text1 }}>
                             <span>Adjustment ({saleDetails.adj_type}):</span>
                             <span>{saleDetails.adj_type === "discount" ? "-" : "+"}{fmt(saleDetails.adj_value)}</span>
                           </div>
                         )}
-                        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 15, fontWeight: 700, color: C.text1, paddingTop: 4, borderTop: `1px solid ${C.border}` }}>
+                        <div className="flex justify-between text-base font-bold pt-2 border-t" style={{ borderColor: C.border, color: C.text1 }}>
                           <span>Total Balanced:</span>
                           <span>{fmt(saleDetails.total)}</span>
                         </div>
                       </div>
                     </div>
                   ) : (
-                    <div style={{ fontSize: 12, color: C.danger }}>Failed to parse cart metadata loop.</div>
+                    <div className="text-xs font-medium" style={{ color: C.danger }}>Failed to parse cart metadata loop.</div>
                   )}
                 </div>
               </div>
 
-              {/* ACTION BAR ACTIONS INTERFACE TRACK */}
-              <div style={{ padding: 16, borderTop: `1px solid ${C.border}`, background: C.bg, display: "flex", flexDirection: "column", gap: 10 }}>
+              {/* ACTION BUTTON CONTROL INTERFACE BAR */}
+              <div className="p-4 border-t flex flex-col gap-2.5" style={{ backgroundColor: C.bg, borderColor: C.border }}>
                 
-                <div style={{ display: "flex", gap: 10, width: "100%" }}>
-                  
+                <div className="flex gap-2 w-full">
                   {/* Thermal Ticket Printer Trigger */}
                   <button
                     onClick={handlePrintReceipt}
                     disabled={isPrinting || isPrintingInvoice || !saleDetails}
-                    style={{
-                      flex: 1,
-                      height: 40,
-                      background: "#2563EB",
-                      color: "#FFFFFF",
-                      border: "none",
-                      borderRadius: 8,
-                      fontSize: 12,
-                      fontWeight: 600,
-                      cursor: "pointer",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      gap: 6,
-                      opacity: (isPrinting || isPrintingInvoice || !saleDetails) ? 0.6 : 1,
-                      boxShadow: "0 1px 2px rgba(37, 99, 235, 0.2)"
-                    }}
+                    className="flex-1 h-10 bg-[#2563EB] hover:opacity-90 disabled:opacity-50 text-white border-none rounded-lg text-xs font-semibold cursor-pointer flex items-center justify-center gap-1.5 shadow-sm transition-opacity"
                   >
                     <IconPrinter size={15} />
                     {isPrinting ? "Spooling..." : "Thermal Ticket"}
@@ -499,54 +512,23 @@ export default function SalesHistory() {
                   <button
                     onClick={handlePrintFullInvoice}
                     disabled={isPrinting || isPrintingInvoice || !saleDetails}
-                    style={{
-                      flex: 1,
-                      height: 40,
-                      background: "#1E293B", 
-                      color: "#FFFFFF",
-                      border: "none",
-                      borderRadius: 8,
-                      fontSize: 12,
-                      fontWeight: 600,
-                      cursor: "pointer",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      gap: 6,
-                      opacity: (isPrinting || isPrintingInvoice || !saleDetails) ? 0.6 : 1,
-                      boxShadow: "0 1px 2px rgba(30, 41, 59, 0.2)"
-                    }}
+                    className="flex-1 h-10 bg-[#1E293B] hover:opacity-90 disabled:opacity-50 text-white border-none rounded-lg text-xs font-semibold cursor-pointer flex items-center justify-center gap-1.5 shadow-sm transition-opacity"
                   >
                     <IconReceipt size={15} />
                     {isPrintingInvoice ? "Compiling..." : "Full Invoice"}
                   </button>
-                  
                 </div>
 
+                {/* Void State Guard Action Trigger */}
                 {selectedSale.status === "voided" ? (
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, color: "#EF4444", justifyContent: "center", fontSize: 13, fontWeight: 500, background: "#FEE2E2", padding: "10px", borderRadius: 8 }}>
-                    <IconAlertCircle size={16} />
+                  <div className="flex items-center gap-2 justify-center text-xs font-medium border p-2.5 rounded-lg bg-[#FEE2E2] border-[#FEE2E2] text-[#EF4444]">
+                    <IconAlertCircle size={16} className="shrink-0" />
                     This transaction has been voided
                   </div>
                 ) : (
                   <button
                     onClick={() => handleVoidSale(selectedSale.id)}
-                    style={{ 
-                      width: "100%", 
-                      height: 40, 
-                      background: "#EF4444", 
-                      color: "#FFFFFF", 
-                      border: "none", 
-                      borderRadius: 8, 
-                      fontSize: 13, 
-                      fontWeight: 600, 
-                      cursor: "pointer", 
-                      display: "flex", 
-                      alignItems: "center", 
-                      justifyContent: "center", 
-                      gap: 8,
-                      boxShadow: "0 1px 2px rgba(239, 68, 68, 0.2)"
-                    }}
+                    className="w-full h-10 bg-[#EF4444] hover:opacity-90 text-white border-none rounded-lg text-xs font-semibold cursor-pointer flex items-center justify-center gap-1.5 shadow-sm transition-opacity"
                   >
                     <IconBan size={16} />
                     Void Transaction & Return Stock
@@ -555,10 +537,12 @@ export default function SalesHistory() {
               </div>
             </div>
           ) : (
-            <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 32, color: C.text3, textAlign: "center" }}>
-              <IconReceipt size={36} stroke={1.25} style={{ marginBottom: 12, color: C.text3 }} />
-              <div style={{ fontSize: 13, fontWeight: 500 }}>No Invoice Highlighted</div>
-              <div style={{ fontSize: 11, marginTop: 4, maxWidth: 220 }}>Select a historical row on the ledger matrix to view snapshot properties or void items.</div>
+            <div className="flex-1 flex flex-col items-center justify-center p-8 text-center" style={{ color: C.text3 }}>
+              <IconReceipt size={40} stroke={1.25} className="mb-3 opacity-60" />
+              <div className="text-xs font-semibold">No Invoice Highlighted</div>
+              <div className="text-[11px] mt-1 max-w-[240px] leading-relaxed">
+                Select a historical row on the ledger matrix to view snapshot properties or void items.
+              </div>
             </div>
           )}
         </div>

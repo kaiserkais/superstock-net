@@ -1,6 +1,9 @@
 import React, { useState, useEffect } from "react";
 import { IconShoppingCart, IconKeyboard, IconPlayerPause } from "@tabler/icons-react";
 import usePosStore from "../store/usePosStore";
+import { useSettingsStore } from "../store/useSettingsStore";
+import { printRepository } from "../services/printRepository";
+import useAuthStore from "../store/useAuthStore";
 import { C } from "../components/pos/posTheme";
 
 // Import core layouts
@@ -15,20 +18,25 @@ import VariantModal from "../components/pos/modals/VariantModal";
 import ClientModal from "../components/pos/modals/ClientModal";
 import TotalEditModal from "../components/pos/modals/TotalEditModal";
 import ConfirmClearModal from "../components/pos/modals/ConfirmClearModal";
-import useAuthStore from "../store/useAuthStore";
+
 // Import feedback components
 import Toast from "../components/pos/ui/Toast";
 
 export default function PosPage() {
   const { user } = useAuthStore();
-  const [activeMode, setActiveMode] = useState("barcode"); // 👈 Added shared input state mode ("barcode" | "search")
+  const [activeMode, setActiveMode] = useState("barcode");
+  const [toast, setToast] = useState(null);
+
+  // Print operational loading states
+  const [printReceiptLoading, setPrintReceiptLoading] = useState(false);
+  const [printInvoiceLoading, setPrintInvoiceLoading] = useState(false);
 
   const {
-    cartItems, parkedCarts,
+    cartItems, parkedCarts, cartClient, getCartTotals,
     parkCart, openConfirmClearModal, executeSale, saleLoading, loadAll
   } = usePosStore();
 
-  const [toast, setToast] = useState(null);
+  const settings = useSettingsStore((state) => state.settings);
 
   const showToast = (message, type = "success") => {
     setToast({ message, type, key: Date.now() });
@@ -57,29 +65,83 @@ export default function PosPage() {
     showToast("Cart parked", "success");
   };
 
-  const handlePrintInvoice = () => {
-    alert("🖨️ Print Invoice — Feature coming soon!");
+  // ── Centralized Printing Draft Payload Generator ──────────────────────────
+  const buildDraftSalePayload = () => {
+    const totals = getCartTotals() || {};
+    const subtotal = Number(totals.subtotal) || 0;
+    const adjustmentValue = Number(totals.adjustmentValue) || 0;
+    const adjustmentType = totals.adjustmentType || "discount";
+    const total = Number(totals.total) || 0;
+    const discountAmount = adjustmentType === "discount" ? adjustmentValue : 0;
+
+    return {
+      id: "DRAFT",
+      created_at: new Date().toISOString(),
+      cashier_name: "Active Session",
+      customer_name: cartClient?.name || "Walk-in Client",
+      customer_phone: cartClient?.phone || "", 
+      subtotal,
+      adj_value: adjustmentValue,
+      adj_type: adjustmentType,
+      discount: discountAmount,
+      total,
+      items: cartItems.map((item) => {
+        const itemQty = Number(item.qty ?? item.quantity ?? 1);
+        const itemPrice = Number(item.unitPrice ?? item.price ?? item.selling_price ?? 0);
+        return {
+          product_name: item.name || "Item",
+          combination: item.combination || item.variant_name || "Standard",
+          qty: itemQty,
+          unit_price: itemPrice, 
+          line_total: Number(item.lineTotal ?? item.line_total) || (itemPrice * itemQty),
+        };
+      }),
+    };
   };
 
-  const handlePrintReceipt = () => {
-    alert("🧾 Print Receipt — Feature coming soon!");
+  const handlePrintReceipt = async () => {
+    if (cartItems.length === 0 || printReceiptLoading || printInvoiceLoading) return;
+    setPrintReceiptLoading(true);
+    try {
+      const currentDraftSale = buildDraftSalePayload();
+      await printRepository.printInvoiceReceipt(currentDraftSale, settings || {});
+    } catch (err) {
+      console.error("Receipt printing failed:", err);
+      alert(err.message);
+    } finally {
+      setPrintReceiptLoading(false);
+    }
   };
 
-  // ── Keyboard shortcuts ──────────────────────────────────────────────────────
+  const handlePrintInvoice = async () => {
+    if (cartItems.length === 0 || printReceiptLoading || printInvoiceLoading) return;
+    setPrintInvoiceLoading(true);
+    try {
+      const currentDraftSale = buildDraftSalePayload();
+      await printRepository.printInvoice(currentDraftSale, settings || {});
+    } catch (err) {
+      console.error("Invoice printing failed:", err);
+      alert(err.message);
+    } finally {
+      setPrintInvoiceLoading(false);
+    }
+  };
+
+  // ── Consolidated Global Keyboard shortcuts ──────────────────────────────────
   useEffect(() => {
     const handler = (e) => {
-      // Intercept F2 immediately so it functions even when focused inside input logs
-      if (e.key === "F2") {
-        e.preventDefault();
-        setActiveMode((prev) => (prev === "barcode" ? "search" : "barcode"));
-        return;
-      }
-
+      const isFunctionKey = e.key.startsWith("F") && !isNaN(e.key.substring(1));
+      
+      // If it's an F-key, always let it pass through even if typing in an input
       const tag = document.activeElement?.tagName;
       const inInput = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
-      if (inInput) return;
+      if (inInput && !isFunctionKey) return;
 
       switch (e.key) {
+        case "F2":
+          e.preventDefault();
+          setActiveMode((prev) => (prev === "barcode" ? "search" : "barcode"));
+          break;
         case "F3":
           e.preventDefault();
           handlePark();
@@ -106,14 +168,13 @@ export default function PosPage() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [cartItems, activeMode]); // 👈 Added activeMode dependency tracking
+  }, [cartItems, activeMode, cartClient, settings, printReceiptLoading, printInvoiceLoading, user]);
 
   return (
     <div style={{ display: "flex", height: "100%", overflow: "hidden", background: C.surface, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" }}>
 
       {/* ── LEFT: Product grid + barcode bar ─────────────────────────────── */}
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", background: C.surface }}>
-        {/* Pass down shared active mode variables */}
         <BarcodeBar activeMode={activeMode} setActiveMode={setActiveMode} />
         <ProductGrid activeMode={activeMode} setActiveMode={setActiveMode} />
       </div>
@@ -133,7 +194,7 @@ export default function PosPage() {
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
             <IconKeyboard size={13} stroke={1.5} style={{ color: C.text3 }} />
-            <span style={{ fontSize: 10, color: C.text3 }}>F2–F7</span> {/* Updated text hint */}
+            <span style={{ fontSize: 10, color: C.text3 }}>F2–F7</span>
           </div>
         </div>
 
@@ -146,6 +207,8 @@ export default function PosPage() {
             onPrintInvoice={handlePrintInvoice}
             onPrintReceipt={handlePrintReceipt}
             saleLoading={saleLoading}
+            printInvoiceLoading={printInvoiceLoading}
+            printReceiptLoading={printReceiptLoading}
           />
         </div>
 

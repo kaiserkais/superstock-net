@@ -6,7 +6,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use sqlx::{QueryBuilder, SqlitePool, Sqlite};
 use std::sync::Arc;
-use crate::AppState; // Assumes AppState contains a `pool: SqlitePool`
+use crate::AppState;
 
 #[derive(Debug, Deserialize)]
 pub struct SalesFilter {
@@ -14,6 +14,12 @@ pub struct SalesFilter {
     pub user_id: Option<String>,
     pub customer_id: Option<String>,
     pub status: Option<String>,
+    // ── New Date Range Filters ──
+    pub start_date: Option<String>, // Expects ISO format or "YYYY-MM-DD"
+    pub end_date: Option<String>,   // Expects ISO format or "YYYY-MM-DD"
+    // ── New Pagination Query Selectors ──
+    pub page: Option<i64>,
+    pub per_page: Option<i64>,
 }
 
 #[derive(Debug, Serialize, sqlx::FromRow)]
@@ -53,14 +59,71 @@ pub struct SaleFullDetails {
     pub items: Vec<SaleItemDetail>,
 }
 
+// ── Shared Standard Envelope for Paginated Deliveries ──────────────────────
+#[derive(Debug, Serialize)]
+pub struct PaginatedResponse<T> {
+    pub data: Vec<T>,
+    pub total_count: i64,
+    pub page: i64,
+    pub per_page: i64,
+    pub total_pages: i64,
+}
+
 /// GET /api/sales
-/// Lists all sales with dynamic query filtering for reporting/history views
+/// Lists all sales supporting server-side cursor pagination, date filtering, and type statuses
 pub async fn get_sales(
     State(state): State<Arc<AppState>>,
     Query(filter): Query<SalesFilter>,
-) -> Result<Json<Vec<SaleSummary>>, (StatusCode, String)> {
+) -> Result<Json<PaginatedResponse<SaleSummary>>, (StatusCode, String)> {
     
-    let mut query_builder: QueryBuilder<'_, Sqlite> = QueryBuilder::new(
+    // 1. Establish pagination fallbacks and constraints
+    let page = filter.page.unwrap_or(1).max(1);
+    let per_page = filter.per_page.unwrap_or(20).max(1).min(100); // Caps requests to max 100 items for safety
+    let offset = (page - 1) * per_page;
+
+    // 2. BUILD COUNT QUERY (Find total items matching conditions)
+    let mut count_builder: QueryBuilder<'_, Sqlite> = QueryBuilder::new(
+        "SELECT COUNT(*) FROM sales s WHERE 1=1 "
+    );
+    
+    if let Some(session) = filter.session_id {
+        count_builder.push(" AND s.session_id = ").push_bind(session);
+    }
+    if let Some(ref user) = filter.user_id {
+        count_builder.push(" AND s.user_id = ").push_bind(user);
+    }
+    if let Some(ref customer) = filter.customer_id {
+        count_builder.push(" AND s.customer_id = ").push_bind(customer);
+    }
+    if let Some(ref status) = filter.status {
+        count_builder.push(" AND s.status = ").push_bind(status);
+    }
+    if let Some(ref start) = filter.start_date {
+        count_builder.push(" AND s.created_at >= ").push_bind(start);
+    }
+    if let Some(ref end) = filter.end_date {
+        count_builder.push(" AND s.created_at <= ").push_bind(end);
+    }
+
+    let total_count: i64 = count_builder
+        .build_query_scalar()
+        .fetch_one(&state.db)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("❌ Count indexing breakdown: {e}")))?;
+
+    // Early exit strategy if nothing matches criteria
+    if total_count == 0 {
+        return Ok(Json(PaginatedResponse {
+            data: vec![],
+            total_count: 0,
+            page,
+            per_page,
+            total_pages: 0,
+        }));
+    }
+
+    // 3. BUILD DATA FETCH QUERY
+    let mut data_builder: QueryBuilder<'_, Sqlite> = QueryBuilder::new(
         "SELECT 
             s.id, s.user_id, u.username as cashier_name, s.session_id, 
             s.customer_id, c.name as customer_name, s.subtotal, 
@@ -72,41 +135,53 @@ pub async fn get_sales(
     );
 
     if let Some(session) = filter.session_id {
-        query_builder.push(" AND s.session_id = ");
-        query_builder.push_bind(session);
+        data_builder.push(" AND s.session_id = ").push_bind(session);
     }
-    if let Some(user) = filter.user_id {
-        query_builder.push(" AND s.user_id = ");
-        query_builder.push_bind(user);
+    if let Some(ref user) = filter.user_id {
+        data_builder.push(" AND s.user_id = ").push_bind(user);
     }
-    if let Some(customer) = filter.customer_id {
-        query_builder.push(" AND s.customer_id = ");
-        query_builder.push_bind(customer);
+    if let Some(ref customer) = filter.customer_id {
+        data_builder.push(" AND s.customer_id = ").push_bind(customer);
     }
-    if let Some(status) = filter.status {
-        query_builder.push(" AND s.status = ");
-        query_builder.push_bind(status);
+    if let Some(ref status) = filter.status {
+        data_builder.push(" AND s.status = ").push_bind(status);
+    }
+    if let Some(ref start) = filter.start_date {
+        data_builder.push(" AND s.created_at >= ").push_bind(start);
+    }
+    if let Some(ref end) = filter.end_date {
+        data_builder.push(" AND s.created_at <= ").push_bind(end);
     }
 
-    query_builder.push(" ORDER BY s.created_at DESC");
+    // Append Sort Engine & Cursor Boundaries
+    data_builder.push(" ORDER BY s.created_at DESC LIMIT ");
+    data_builder.push_bind(per_page);
+    data_builder.push(" OFFSET ");
+    data_builder.push_bind(offset);
 
-    let sales = query_builder
+    let sales = data_builder
         .build_query_as::<SaleSummary>()
         .fetch_all(&state.db)
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("❌ Database query error: {e}")))?;
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("❌ Data extraction breakdown: {e}")))?;
 
-    Ok(Json(sales))
+    // Calculate dynamic pagination bounds
+    let total_pages = (total_count as f64 / per_page as f64).ceil() as i64;
+
+    Ok(Json(PaginatedResponse {
+        data: sales,
+        total_count,
+        page,
+        per_page,
+        total_pages,
+    }))
 }
 
 /// GET /api/sales/:id
-/// Fetches structural breakdown of a singular ticket alongside its snapshot line-items
 pub async fn get_sale(
     State(state): State<Arc<AppState>>,
     Path(sale_id): Path<String>,
 ) -> Result<Json<SaleFullDetails>, (StatusCode, String)> {
-    
-    // 1. Fetch metadata summary header
     let summary = sqlx::query_as::<_, SaleSummary>(
         "SELECT 
             s.id, s.user_id, u.username as cashier_name, s.session_id, 
@@ -123,7 +198,6 @@ pub async fn get_sale(
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
     .ok_or((StatusCode::NOT_FOUND, "Invoice not found".to_string()))?;
 
-    // 2. Fetch linked snapshot line items
     let items = sqlx::query_as::<_, SaleItemDetail>(
         "SELECT id, product_id, variant_id, product_name, unit, qty, unit_cost, unit_price, line_total, is_weighted 
          FROM sale_items 
@@ -138,17 +212,13 @@ pub async fn get_sale(
 }
 
 /// PATCH /api/sales/:id/void
-/// Voids a transactional file and gracefully returns product quantities back into stock ledger modules
 pub async fn void_sale(
     State(state): State<Arc<AppState>>,
     Path(sale_id): Path<String>,
 ) -> Result<StatusCode, (StatusCode, String)> {
-    
-    // Initialize atomic SQLite transaction context
     let mut tx = state.db.begin().await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    // 1. Verify invoice status isn't already voided
     let current_status: Option<String> = sqlx::query_scalar("SELECT status FROM sales WHERE id = ?")
         .bind(&sale_id)
         .fetch_optional(&mut *tx)
@@ -164,7 +234,6 @@ pub async fn void_sale(
         return Err((StatusCode::BAD_REQUEST, "This transaction has already been voided".to_string()));
     }
 
-    // 2. Fetch sale items to resolve stock restoration values
     let items = sqlx::query_as::<_, SaleItemDetail>(
         "SELECT id, product_id, variant_id, product_name, unit, qty, unit_cost, unit_price, line_total, is_weighted 
          FROM sale_items WHERE sale_id = ?"
@@ -174,12 +243,10 @@ pub async fn void_sale(
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    // 3. Loop through individual items to replenish stock tracking pools
     for item in items {
-        let quantity_to_return = item.qty.round() as i64; // DB schema uses INTEGER for master quantities
+        let quantity_to_return = item.qty.round() as i64;
 
         if let Some(v_id) = item.variant_id {
-            // Replenish sub-matrix variant inventory balance rows
             sqlx::query("UPDATE product_variants SET quantity = quantity + ? WHERE id = ?")
                 .bind(quantity_to_return)
                 .bind(v_id)
@@ -187,7 +254,6 @@ pub async fn void_sale(
                 .await
                 .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
         } else {
-            // Replenish regular non-variable product master balance rows
             sqlx::query("UPDATE products SET quantity = quantity + ? WHERE id = ?")
                 .bind(quantity_to_return)
                 .bind(item.product_id)
@@ -197,14 +263,12 @@ pub async fn void_sale(
         }
     }
 
-    // 4. Finalize structural status alteration 
     sqlx::query("UPDATE sales SET status = 'voided' WHERE id = ?")
         .bind(&sale_id)
         .execute(&mut *tx)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    // Commit transaction cleanly to disk storage mapping indexes
     tx.commit().await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
